@@ -1,4 +1,4 @@
 interface:
   display_name: "Playbook SLC"
-  short_description: "诊断 SLC 编译错误，调整流程描述或产物并保留复验依据"
-  default_prompt: "使用 $playbook-slc 分析这次 SLC 编译失败，结合参考源码给出最小修复和复验方案。"
+  short_description: "安装 SLC 与 Playbook，编译、登记、运行工作流并诊断错误"
+  default_prompt: "使用 $playbook-slc 编译这个 flow.md，登记后拿 orders.csv 跑一次。"

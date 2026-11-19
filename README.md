@@ -2,7 +2,7 @@
 <!-- SPDX-FileCopyrightText: 2026 Boboyang -->
 # playbook-slc
 
-一个分析 SLC CLI 编译错误与 Playbook 启动错误的 Codex Skill。结合原始审计、生成产物以及随仓库分发的版本化源码切面，定位问题，建议或按要求调整自然语言流程、修补工作流，并记录复验依据。
+在 Codex 或 Claude Code 中，通过自然语言安装 SLC 和 Playbook、编译流程、登记入口并运行工作流。出现编译或运行错误时，用原始审计、生成产物和随仓库分发的版本化源码定位问题并给出复验依据。
 
 ## 使用
 
@@ -14,19 +14,26 @@ mkdir -p ~/.agents/skills
 ln -s "$PWD/playbook-slc" ~/.agents/skills/playbook-slc
 ```
 
-已有同名目录时先检查，不覆盖。重新打开 Codex 会话后可自然语言触发，也可显式调用：
+已有同名目录时先检查。Claude Code 项目可在 `.claude/skills/playbook-slc` 安装同一份 Skill。重新打开会话后用自然语言提出任务。
+
+> 编译这个 flow.md，登记后拿 orders.csv 跑一次。
+
+> 用已登记的 /flow 跑这份 orders.csv。
+
+Skill 识别当前宿主。会话模型名可确认且可传给 CLI 时沿用，其他情况使用宿主配置。最低支持 SLC `0.23.0` 和 Playbook `19.1.0`。缺包按需安装，更换已有的全局版本和处理同名登记时请用户确认。[命令与结果说明](references/workflow-cli.md)
 
 > 使用 $playbook-slc 分析这次 SLC 编译失败。先说明根因和修改建议。
 
 > 修复这个工作流，允许修改自然语言描述或简单修补生成代码，先备份，保留 TDD 的核心流程。
 
-Skill 由当前宿主 Agent 执行分析。三个辅助工具只依赖 Python 3，不执行用户生成代码、不调用模型；真正复验才需要用户已有的 SLC 和 Agent 环境。没有编译日志时可仅分析粘贴的错误，但会明确证据缺口。
+现有诊断、备份和参考文件校验工具仍可离线使用。只提供错误文本时，也能按实际证据分析并标明缺失信息。
 
 ## 包含什么
 
 - [SKILL.md](SKILL.md)：诊断、修改、备份、复验与结论规则。
 - [源码索引](references/source-map.md)：按症状定位 SLC/Playbook 的原始代码和规约。
 - [原文切面](references/upstream/manifest.json)：固定提交、版本、来源 URL 与每个文件 SHA-256；真实文件随仓库发布，不依赖外部链接或 Git 子模块。
+- scripts/workflow_cli.py：调用本机 npm、SLC 和 Playbook，返回阶段、命令和结果记录。
 - scripts/inspect_case.py：只读收集实际版本、阶段、结构化检查和错误线索。
 - scripts/backup_case.py：修改前按路径备份并逐文件校验，不覆盖旧备份。
 - scripts/sync_references.py：从指定 Git 提交更新或离线校验快照，不联网、不执行上游代码。

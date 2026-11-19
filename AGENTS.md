@@ -1,6 +1,6 @@
 # playbook-slc
 
-本仓库交付一个 Codex Skill。入口是根目录 SKILL.md，辅助工具仅依赖 Python 3 标准库。
+本仓库交付 Codex 和 Claude Code 可用的 Skill，入口是根目录 SKILL.md。诊断与证据工具仅依赖 Python 3 标准库。CLI 操作使用本机 npm、SLC、Playbook 和 Node.js。
 
 - 改动前读 SKILL.md 和对应 references/ 文档，保持工具与文档一致。
 - references/upstream/ 是第三方原文，只通过 scripts/sync_references.py 从固定 Git 提交刷新，保留许可和 manifest；不能直接编辑。
