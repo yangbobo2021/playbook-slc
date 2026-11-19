@@ -1,0 +1,449 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+/**
+ * Deterministic entry-module emission (DR-014, DR-017, DR-024,
+ * self-hosting-15).
+ *
+ * After a successful full-link of the `playbook` pipeline, {@link
+ * emitEntryModule} writes `<cwd>/<basename>.ts`: an erasable-TypeScript module
+ * default-exporting a Playbook registry entry derived entirely from the
+ * compiled bundle — `id`/`command` from the basename, `requiredRoleIds` from
+ * the gears `Roles:`/`Players:` declaration, `intent` from the normalized
+ * source's title and first prose paragraph, the linked artifact's public pure
+ * option validator (or the retained legacy allowlist), and `createRuntime`
+ * wiring the linked default factory. A current `Roles:` source declares the
+ * canonical lowercase local role ids its compiled machine's delegated states
+ * name, so the host binds exactly those ids and the session's `callPlayer`
+ * port needs no translation (DR-024); a historical `Players:` source keeps
+ * its verbatim declared names behind the DR-017 role-binding boundary, which
+ * maps the linked runtime's lowercased player ids back to them. Its
+ * generation's host consumes the module unchanged (self-hosting-14). See
+ * specs/packages/self-hosting.md.
+ */
+
+import { readFile, writeFile } from 'node:fs/promises';
+import { join, relative, sep } from 'node:path';
+
+import { inspectGearsRoleContract, parseGearsItems } from './verify.js';
+import { linkedOptionsValidator } from './entry-options.js';
+import type { ArtifactWriter } from './artifacts.js';
+import { createRequire } from 'node:module';
+
+/** Options for {@link emitEntryModule}. */
+export interface EmitEntryModuleOptions {
+  /** Invocation working directory the module is written into (DR-014). */
+  cwd: string;
+  /** The DR-001 basename naming the entry module and the bundle. */
+  basename: string;
+  /** Pipeline reference forming the bundle directory leaf `<basename>.<pipeline>`. */
+  pipeline: string;
+  /** The optimized gears artifact: players and script items. */
+  gearsPath: string;
+  /** The normalized (or entry-form) text source: title and lead paragraph. */
+  textPath: string;
+  /** Explicit canonical directory, including invocation from inside a bundle. */
+  artifactDir?: string;
+  /** Completion collects content until every module probe is checked. */
+  write?: ArtifactWriter;
+}
+
+/** Emits the entry module and returns its path. */
+export async function emitEntryModule(
+  opts: EmitEntryModuleOptions,
+): Promise<string> {
+  const gears = await readFile(opts.gearsPath, 'utf8');
+  const text = await readFile(opts.textPath, 'utf8');
+  // One derivation serves both generations: the declared names, verbatim in
+  // source order, and the canonical lowercase local role ids the compiled
+  // machine's delegated states carry. A `Roles:` source compiles to a schema-3
+  // artifact whose linked factory takes configured options plus live host
+  // capabilities; a `Players:` source keeps the schema-1 entry contract
+  // (DR-024).
+  const roleContract = inspectGearsRoleContract(gears);
+  const schema3 = roleContract.generation === 'schema-3';
+  // Two declared names differing only by case derive one canonical role id, so
+  // neither the schema-3 host binding nor the schema-1 role-binding boundary
+  // could tell them apart (DR-017, DR-024).
+  const byRoleId = new Map<string, string>();
+  roleContract.names.forEach((name, index) => {
+    const roleId = roleContract.roleIds[index];
+    const existing = byRoleId.get(roleId);
+    if (existing !== undefined && existing !== name) {
+      throw new Error(
+        `entry emission failed: declared players "${existing}" and "${name}" collide case-insensitively`,
+      );
+    }
+    byRoleId.set(roleId, name);
+  });
+  const hasScript = parseGearsItems(gears).some(
+    (item) => item.actor === 'script',
+  );
+  const bundle =
+    opts.artifactDir ?? join(opts.cwd, `${opts.basename}.${opts.pipeline}`);
+  const delegatedOptions =
+    schema3 &&
+    (await linkedOptionsValidator({
+      linkedPath: join(bundle, `${opts.basename}.playbook.ts`),
+      fsmPath: join(bundle, `${opts.basename}.fsm.ts`),
+    })) !== undefined;
+  const intent = deriveIntent(text) ?? opts.basename;
+  const path = join(opts.cwd, `${opts.basename}.mjs`);
+  const spec = {
+    basename: opts.basename,
+    bundleLeaf: relative(opts.cwd, bundle).split(sep).join('/') || '.',
+    roleIds: schema3 ? roleContract.roleIds : roleContract.names,
+    hasScript,
+    delegatedOptions,
+    intent,
+    schema3,
+    concurrentRoleSets: schema3 ? roleContract.concurrentRoleSets : [],
+  };
+  const typed = renderEntryModule(spec);
+  const marker = `// @sublang/slc-build-manifest ${JSON.stringify('./' + relative(opts.cwd, join(bundle, 'build-manifest.json')).split(sep).join('/'))}\n`;
+  const ts = createRequire(import.meta.url)(
+    'typescript',
+  ) as typeof import('typescript');
+  const javascript =
+    schema3 && delegatedOptions
+      ? renderJavaScriptEntry(spec)
+      : legacyEntryTypes(schema3) +
+        ts.transpileModule(annotateLegacyEntry(typed, schema3), {
+          compilerOptions: {
+            target: ts.ScriptTarget.ES2022,
+            module: ts.ModuleKind.ESNext,
+            verbatimModuleSyntax: true,
+          },
+        }).outputText;
+  await (opts.write ?? writeFile)(path, marker + javascript);
+  return path;
+}
+
+/**
+ * An ATX heading on a trimmed line (CommonMark 4.2): one to six `#` followed by
+ * whitespace or the line's end, so a `#123` issue reference is prose.
+ */
+const ATX_HEADING = /^#{1,6}(?:\s|$)/;
+
+/**
+ * Besides an ATX heading, a line that ends a hard-wrapped prose paragraph: a
+ * comment, a new list item (a marker followed by whitespace, so a wrapped `-1`
+ * or `-based` continues the sentence), or a role-declaration label.
+ */
+const PARAGRAPH_BREAK = /^(?:<!--|(?:[-*+]|\d+[.)])\s|(?:Roles|Players):\s*$)/;
+
+/**
+ * Title and first prose paragraph of the normalized source, joined as the
+ * intent. The compiler's normalized text hard-wraps paragraphs, so the lead's
+ * continuation lines are joined with single spaces until the paragraph ends.
+ */
+function deriveIntent(text: string): string | undefined {
+  let title: string | undefined;
+  const lead: string[] = [];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (lead.length > 0) {
+      if (
+        trimmed === '' ||
+        ATX_HEADING.test(trimmed) ||
+        PARAGRAPH_BREAK.test(trimmed)
+      )
+        break;
+      lead.push(trimmed);
+      continue;
+    }
+    if (trimmed === '' || trimmed.startsWith('<!--')) continue;
+    if (title === undefined) {
+      const heading = /^#\s+(.*)$/.exec(trimmed);
+      if (heading !== null) {
+        title = heading[1].trim();
+        continue;
+      }
+    }
+    if (
+      ATX_HEADING.test(trimmed) ||
+      // A bullet's `-` is followed by whitespace, so a leading `-1` is prose.
+      /^-(?:\s|$)/.test(trimmed) ||
+      /^(?:Roles|Players):\s*$/.test(trimmed)
+    ) {
+      continue;
+    }
+    lead.push(trimmed);
+  }
+  const paragraph = lead.length > 0 ? lead.join(' ') : undefined;
+  if (title !== undefined && paragraph !== undefined)
+    return `${title} — ${paragraph}`;
+  return title ?? paragraph;
+}
+
+function renderEntryModule(spec: {
+  basename: string;
+  bundleLeaf: string;
+  roleIds: readonly string[];
+  hasScript: boolean;
+  delegatedOptions: boolean;
+  intent: string;
+  schema3: boolean;
+  concurrentRoleSets: readonly (readonly string[])[];
+}): string {
+  const allowed = spec.hasScript ? `['cwd']` : `[]`;
+  const cwdWiring =
+    spec.hasScript && !spec.delegatedOptions
+      ? `{\n      ...validated,\n      cwd: validated.cwd ?? process.cwd(),\n    }`
+      : `validated`;
+  // A schema-3 linked factory takes exactly `configuredOptions` and live
+  // `hostCapabilities`; a schema-1 factory keeps its single options argument
+  // under its own historical dependency closure (DR-024).
+  // Both aliases come from the artifact's own factory signature, so the entry
+  // imports no host-owned type: a schema-3 input carries `configuredOptions`
+  // and `hostCapabilities`, a schema-1 input is the options object itself.
+  const runtimeOptionsAlias = spec.schema3
+    ? `type RuntimeOptions = FactoryInput['configuredOptions'];\ntype HostCapabilities = FactoryInput['hostCapabilities'];`
+    : `type RuntimeOptions = FactoryInput;`;
+  const schema3Param = spec.schema3
+    ? `,\n    hostCapabilities: HostCapabilities`
+    : '';
+  const factoryArgument = spec.schema3
+    ? `{\n      configuredOptions: ${cwdWiring},\n      hostCapabilities,\n    }`
+    : cwdWiring;
+  // The manifest's `runtimeProfile` is the host's implementation declaration,
+  // not slc's internal contract marker: a shared-factory artifact declares
+  // `{ kind: 'shared-factory', compat }` whose `compat` is the very immutable
+  // record the linked factory captured from its validated `spec.compat` — the
+  // artifact's own `{ artifactSchema, runtimeAbi }` declaration — so the host
+  // reads the emitted module's compatibility rather than a marker string it
+  // cannot interpret (DR-024, DR-028).
+  const schemaMembers = spec.schema3
+    ? `\n  artifactSchema: 3,\n  runtimeProfile: Object.freeze({\n    kind: 'shared-factory',\n    compat: createPlaybookRuntime.compat,\n  }),\n  concurrentRoleSets: ${JSON.stringify(
+        spec.concurrentRoleSets,
+      )} as readonly (readonly string[])[],`
+    : '';
+  // A schema-3 entry declares the very ids the machine's delegated states
+  // name, so the host's `callPlayer` port needs no translation and the entry
+  // returns the linked factory's runtime directly (DR-024). Only a historical
+  // schema-1 entry keeps the DR-017 role-binding boundary, which maps the
+  // runtime's lowercased player ids back to the verbatim declared names.
+  const roleBinding = spec.schema3
+    ? ''
+    : `
+const ROLE_ID_BY_RESOLVED: ReadonlyMap<string, string> = new Map(
+  REQUIRED_ROLE_IDS.map((id): [string, string] => [id.toLowerCase(), id]),
+);
+
+function bindRoleIds(session: unknown): unknown {
+  if (typeof session !== 'object' || session === null) return session;
+  const ports = (session as { ports?: unknown }).ports;
+  if (typeof ports !== 'object' || ports === null) return session;
+  const callPlayer = (ports as Record<string, unknown>).callPlayer;
+  if (typeof callPlayer !== 'function') return session;
+  return {
+    ...session,
+    ports: {
+      ...(ports as Record<string, unknown>),
+      callPlayer: (playerId: unknown, ...rest: unknown[]) =>
+        (callPlayer as (...args: unknown[]) => unknown).call(
+          ports,
+          typeof playerId === 'string'
+            ? (ROLE_ID_BY_RESOLVED.get(playerId) ?? playerId)
+            : playerId,
+          ...rest,
+        ),
+    },
+  };
+}
+
+function withRoleBinding<T extends object>(runtime: T): T {
+  return new Proxy(runtime, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (
+        (property === 'init' || property === 'restore') &&
+        typeof value === 'function'
+      ) {
+        return (session: unknown, ...rest: unknown[]) =>
+          (value as (...args: unknown[]) => unknown).call(
+            target,
+            bindRoleIds(session),
+            ...rest,
+          );
+      }
+      return value;
+    },
+  });
+}
+`;
+  const runtimeExpression = spec.schema3
+    ? `createPlaybookRuntime(${factoryArgument})`
+    : `withRoleBinding(createPlaybookRuntime(${factoryArgument}))`;
+  const roleNote = spec.schema3
+    ? `// bundle; recompiling regenerates it. \`requiredRoleIds\` are the canonical
+// lowercase local role ids the compiled machine's delegated states name
+// (DR-024).`
+    : `// bundle; recompiling regenerates it. The role-binding boundary (DR-017)
+// hands the host's \`callPlayer\` port only declared role ids.`;
+  return `// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+//
+// Generated by slc (DR-014): the registry entry exposing the compiled
+// playbook to \`playbook run\`. Derived deterministically from the compiled
+${roleNote}
+
+import createPlaybookRuntime${spec.delegatedOptions ? ', { validateOptions as linkedValidateOptions }' : ''} from './${spec.bundleLeaf === '.' ? '' : `${spec.bundleLeaf}/`}${spec.basename}.playbook.ts';
+
+type FactoryInput = NonNullable<Parameters<typeof createPlaybookRuntime>[0]>;
+${runtimeOptionsAlias}
+
+${spec.delegatedOptions ? '' : `const ALLOWED_OPTION_KEYS: readonly string[] = ${allowed};`}
+
+const REQUIRED_ROLE_IDS: readonly string[] = [${spec.roleIds.map(sourceString).join(', ')}];
+${roleBinding}
+${
+  spec.delegatedOptions
+    ? `const validateOptions: (value: unknown) => RuntimeOptions = linkedValidateOptions;`
+    : `function validateOptions(value: unknown): RuntimeOptions {
+  if (value === undefined) return {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('playbook options must be an object');
+  }
+  const options: Record<string, string> = {};
+  for (const [key, option] of Object.entries(value)) {
+    if (!ALLOWED_OPTION_KEYS.includes(key)) {
+      throw new Error(
+        \`unknown option "\${key}" (allowed: \${ALLOWED_OPTION_KEYS.join(', ') || 'none'})\`,
+      );
+    }
+    if (typeof option !== 'string' || option === '') {
+      throw new Error(\`option "\${key}" must be a non-empty string\`);
+    }
+    options[key] = option;
+  }
+  return options as RuntimeOptions;
+}`
+}
+
+const entry = {
+  id: ${sourceString(spec.basename)},
+  command: ${sourceString(spec.basename)},
+  intent: ${sourceString(spec.intent)},${schemaMembers}
+  requiredRoleIds: [...REQUIRED_ROLE_IDS],
+  validateOptions,
+  createRuntime(${spec.schema3 ? 'configuredOptions: unknown' : 'options: { captainOptions?: unknown }'}${schema3Param}) {
+    const validated = validateOptions(${spec.schema3 ? 'configuredOptions' : 'options.captainOptions'});
+    return ${runtimeExpression};
+  },
+};
+
+export default entry;
+`;
+}
+
+function sourceString(value: string): string {
+  // Single-quoted source form (the repo's prettier style), derived from the
+  // JSON escape so control characters stay escaped.
+  const json = JSON.stringify(value)
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  const inner = json.slice(1, -1).replace(/\\"/g, '"').replace(/'/g, "\\'");
+  return `'${inner}'`;
+}
+
+/** New schema-3 entries keep imported types in JSDoc so checkJs is authoritative. */
+function renderJavaScriptEntry(
+  spec: Parameters<typeof renderEntryModule>[0],
+): string {
+  const linked =
+    './' +
+    (spec.bundleLeaf === '.' ? '' : spec.bundleLeaf + '/') +
+    spec.basename +
+    '.playbook.ts';
+  return `// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+// Generated by slc. Recompilation replaces this registry entry.
+import createPlaybookRuntime, { validateOptions } from ${JSON.stringify(linked)};
+/** @typedef {NonNullable<Parameters<typeof createPlaybookRuntime>[0]>} FactoryInput */
+const entry = {
+  id: ${JSON.stringify(spec.basename)},
+  command: ${JSON.stringify(spec.basename)},
+  intent: ${JSON.stringify(spec.intent)},
+  artifactSchema: 3,
+  runtimeProfile: Object.freeze({ kind: 'shared-factory', compat: createPlaybookRuntime.compat }),
+  concurrentRoleSets: ${JSON.stringify(spec.concurrentRoleSets)},
+  requiredRoleIds: ${JSON.stringify(spec.roleIds)},
+  validateOptions,
+  /** @param {unknown} configuredOptions @param {FactoryInput['hostCapabilities']} hostCapabilities */
+  createRuntime(configuredOptions, hostCapabilities) {
+    return createPlaybookRuntime({ configuredOptions: validateOptions(configuredOptions), hostCapabilities });
+  },
+};
+export default entry;
+`;
+}
+
+/** Carry the deterministic legacy template's erased types into checkable JS. */
+function annotateLegacyEntry(source: string, schema3: boolean): string {
+  source = source.replace(
+    'const ALLOWED_OPTION_KEYS:',
+    '/** @type {readonly string[]} */\nconst ALLOWED_OPTION_KEYS:',
+  );
+  source = source.replace(
+    'const REQUIRED_ROLE_IDS:',
+    '/** @type {readonly string[]} */\nconst REQUIRED_ROLE_IDS:',
+  );
+  source = source.replace(
+    'const ROLE_ID_BY_RESOLVED:',
+    '/** @type {ReadonlyMap<string, string>} */\nconst ROLE_ID_BY_RESOLVED:',
+  );
+  source = source.replace(
+    '(id): [string, string] => [id.toLowerCase(), id]',
+    '(id) => /** @type {[string, string]} */ ([id.toLowerCase(), id])',
+  );
+  source = source.replace(
+    'function bindRoleIds(',
+    '/** @param {unknown} session @returns {unknown} */\nfunction bindRoleIds(',
+  );
+  source = source.replace(
+    '(session as { ports?: unknown })',
+    '/** @type {{ ports?: unknown }} */ (session)',
+  );
+  source = source.replace(
+    '(ports as Record<string, unknown>)',
+    '/** @type {Record<string, unknown>} */ (ports)',
+  );
+  source = source.replace(
+    'function withRoleBinding<',
+    '/** @template {object} T @param {T} runtime @returns {T} */\nfunction withRoleBinding<',
+  );
+  source = source.replace(
+    '(playerId: unknown, ...rest: unknown[]) =>',
+    '/** @param {unknown} playerId @param {unknown[]} rest */ (playerId: unknown, ...rest: unknown[]) =>',
+  );
+  source = source.replace(
+    '(session: unknown, ...rest: unknown[]) =>',
+    '/** @param {unknown} session @param {unknown[]} rest */ (session: unknown, ...rest: unknown[]) =>',
+  );
+  source = source.replace(
+    'function validateOptions(',
+    '/** @param {unknown} value @returns {RuntimeOptions} */\nfunction validateOptions(',
+  );
+  source = source.replace(
+    '  const options: Record<string, string>',
+    '  /** @type {Record<string, string>} */\n  const options: Record<string, string>',
+  );
+  source = source.replace(
+    '  createRuntime(',
+    (schema3
+      ? '  /** @param {unknown} configuredOptions @param {HostCapabilities} hostCapabilities */'
+      : '  /** @param {{ captainOptions?: unknown }} options */') +
+      '\n  createRuntime(',
+  );
+  return source;
+}
+
+function legacyEntryTypes(schema3: boolean): string {
+  return (
+    `/** @typedef {NonNullable<Parameters<typeof createPlaybookRuntime>[0]>} FactoryInput */\n` +
+    (schema3
+      ? `/** @typedef {FactoryInput['configuredOptions']} RuntimeOptions */\n/** @typedef {FactoryInput['hostCapabilities']} HostCapabilities */\n`
+      : `/** @typedef {FactoryInput} RuntimeOptions */\n`)
+  );
+}

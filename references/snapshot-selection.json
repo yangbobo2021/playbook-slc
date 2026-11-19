@@ -1,0 +1,15 @@
+{
+  "schema": "playbook-slc.snapshot-selection.v1",
+  "repositories": {
+    "slc": {
+      "url": "https://github.com/sublang-ai/slc",
+      "purpose": "CLI、配置、执行修正、检查器、审计、构建与入口",
+      "patterns": ["LICENSE", "NOTICE*", "package.json", "README.md", "src/*.ts", "src/normalize.md", "pipelines/playbook/*.md", "pipelines/playbook/*.mjs", "pipelines/playbook/workflow-contracts.json", "specs/packages/*.md", "specs/decisions/009-*.md", "specs/decisions/022-*.md", "specs/decisions/024-*.md", "specs/decisions/029-*.md", "specs/decisions/033-*.md", "specs/decisions/058-*.md"]
+    },
+    "playbook": {
+      "url": "https://github.com/sublang-ai/playbook",
+      "purpose": "权威阶段定义、运行时、仓库效果、恢复与宿主加载",
+      "patterns": ["LICENSE", "NOTICE*", "package.json", "README.md", "src/runtime.ts", "src/xstate-runtime.ts", "src/xstate-playbook-runtime.ts", "src/accepted-outcome.ts", "src/script-output.ts", "src/artifact-environment.ts", "src/artifact-files.ts", "src/fresh-artifact.ts", "slc/*.md", "slc/*.mjs", "slc/workflow-contracts.json", "reference/sdlc/code.playbook/host-capabilities.ts", "reference/sdlc/code.playbook/host-capabilities.js", "reference/sdlc/code.playbook/code.registry.ts", "reference/sdlc/code.playbook/bin/repository-effects.js", "reference/sdlc/code.playbook/bin/playbook.js", "reference/sdlc/code.playbook/bin/run.js", "reference/sdlc/code.playbook/bin/session-host.js", "reference/sdlc/code.playbook/bin/session-store.js", "reference/sdlc/code.playbook/bin/session-replay.js", "reference/sdlc/code.playbook/bin/adapter-sdk.js", "specs/packages/*.md", "specs/decisions/040-*.md", "specs/decisions/046-*.md", "specs/decisions/062-*.md", "specs/decisions/069-*.md", "specs/decisions/088-*.md", "specs/decisions/090-*.md"]
+    }
+  }
+}

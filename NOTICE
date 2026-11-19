@@ -1,0 +1,20 @@
+playbook-slc
+Copyright 2026 Boboyang
+
+This repository includes selected, unmodified source and specification files:
+
+SubLang Compiler (SLC)
+https://github.com/sublang-ai/slc
+Copyright 2026 SubLang International <https://sublang.ai>
+Licensed under the Apache License, Version 2.0.
+See references/upstream/slc/LICENSE.
+
+SPEX Playbook
+https://github.com/sublang-ai/playbook
+Copyright 2026 SubLang International <https://sublang.ai>
+Licensed under the Apache License, Version 2.0.
+See references/upstream/playbook/LICENSE.
+
+Pinned commits, provenance URLs and individual file hashes are recorded in
+references/upstream/manifest.json. Original notices remain in copied files.
+The copied references are diagnostic material, not an installed runtime.

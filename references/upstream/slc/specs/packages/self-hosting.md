@@ -1,0 +1,165 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
+
+# self-hosting: Self-Hosting Meta-Pipeline
+
+## Intent
+
+This package specifies the user-facing and component contracts of the reserved `slc` meta-pipeline: how a user compiles a phase or link definition into a runnable compiled artifact, and how `slc` realizes that pipeline and its distinct `playbook` linked format, per [DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md).
+The meta-pipeline is another explicitly named pipeline that runs through the generic mechanics specified in the `pipeline` package, produces an artifact the `phase-execution` package executes and the `pinning` package pins, and shares its Playbook-authored definitions with the `playbook` domain pipeline under [DR-009](../decisions/009-slc-playbook-pipeline-compilation.md), including the successive atomic reviewed-asset adoptions initiated under [DR-011](../decisions/011-playbook-1-0-captain-contract-adoption.md).
+The schema-3 definition and artifact set adopted under [DR-024](../decisions/024-playbook-10-schema-3-adoption.md) and its completed activation in [DR-027](../decisions/027-complete-playbook-10-activation.md) is current at whichever Playbook release the dependency lock resolves, with schema-1 support retained only for historical artifacts; releases are adopted routinely under [DR-028](../decisions/028-contract-based-adoption-without-recompilation.md), which rebuilt the three meta-phase bundles once as compiled-execution control shells and retains each thereafter by verified equivalence.
+Verification exercises an `slc`-named fixture pipeline, the reserved `slc`, and the `playbook` domain pipeline end to end with a faked agent transport.
+Essential project-specific references: `slc`, this project's compiler CLI; the reserved `slc` pipeline, the `playbook` linked format, and the host-side phase-runner facade of [DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md); and `@sublang/playbook`, which provides the meta-pipeline definitions `slc` consumes.
+
+## External Behavior
+
+### Compiling definitions
+
+#### self-hosting-1
+
+When the user runs the reserved `slc` pipeline on a phase or link definition, the slc command shall compile that definition through the meta-pipeline's phases into an `fsm` object artifact in the invocation working directory's artifact directory, and, when the user links it against an explicit runtime target, into a runnable compiled `playbook` artifact, so the user authors no transformation code to obtain a reviewable compiled phase ([DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md), [DR-002](../decisions/002-slc-link-phases.md), [DR-014](../decisions/014-cwd-output-invocation-defaults-entry-emission.md)).
+
+#### self-hosting-14
+
+Where `-o` is absent, the deterministic entry path does not alias the raw source, and no two distinct declared role names collide case-insensitively, when the user runs the `playbook` pipeline on a source without `--link`, the slc command shall additionally produce a runnable entry module at its canonical invocation-directory location, using `<basename>.mjs` for newly emitted entries while preserving historical `.ts` entry consumption [[standalone-compilation-4](standalone-compilation.md#standalone-compilation-4)] — a `Roles` source's schema-3 registry entry, which a Playbook host performs through its effective slash command once the entry is enabled and role-bound in Playbook configuration, or a historical `Players` source's schema-1 entry, consumed as `playbook run ./<basename>.ts "<task>"` under its historical host — so the compiled workflow runs with no hand-written wiring ([DR-014](../decisions/014-cwd-output-invocation-defaults-entry-emission.md), [DR-017](../decisions/017-playbook-2-0-thin-runtime-adoption.md), [DR-024](../decisions/024-playbook-10-schema-3-adoption.md), [[self-hosting-15](#self-hosting-15)]).
+
+### Reserved pipeline
+
+#### self-hosting-2
+
+The slc command shall reserve the pipeline name `slc` for the meta-pipeline that compiles phase and link definitions into runnable artifacts, resolving that reference to the shared Playbook-authored definition set [[self-hosting-9](#self-hosting-9)] rather than a duplicate, requiring it to be named explicitly (claiming no default), and leaving the invocation grammar unchanged ([DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md), [DR-001](../decisions/001-slc-pipeline-layout-naming-invocation.md)).
+
+#### self-hosting-6
+
+When resolving a `playbook` pipeline reference, the slc command shall resolve it to the same shared definition set that backs the reserved `slc` [[self-hosting-9](#self-hosting-9)], so the `playbook` and `slc` pipelines share one definition set, one pin index, and the same compiled artifacts, differing only by name and thus by [DR-001](../decisions/001-slc-pipeline-layout-naming-invocation.md) artifact directory ([DR-009](../decisions/009-slc-playbook-pipeline-compilation.md)).
+
+#### self-hosting-9
+
+When resolving the reserved `slc` or the `playbook` pipeline reference, the slc command shall use the applicable shared definition set ([DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md), [DR-009](../decisions/009-slc-playbook-pipeline-compilation.md)):
+
+| Case | Shared definition set |
+| --- | --- |
+| At least one pipeline search root contains a directory named `playbook`. | The pipeline-search-root `playbook` directories — a committed vendor of Playbook's definitions, whose pin index can select compiled execution [[phase-execution-27](phase-execution.md#phase-execution-27)]. |
+| No pipeline search root contains a directory named `playbook`. | The meta-pipeline definitions the installed `@sublang/playbook` provides. |
+
+#### self-hosting-13
+
+When a full invocation carries no `--link`, the slc command shall apply the pipeline's required link behavior ([DR-014](../decisions/014-cwd-output-invocation-defaults-entry-emission.md), [[pipeline-13](pipeline.md#pipeline-13)]):
+
+| Pipeline | Required link behavior |
+| --- | --- |
+| `playbook` | Supply `src/runtime.ts` from the single selected compatible Playbook runtime, also used for its shared definitions, generated imports and checks [[standalone-compilation-3](standalone-compilation.md#standalone-compilation-3)], as the default link target and run the full-link form against it. |
+| Reserved `slc` or any other pipeline | Infer no default link target; require an explicit `--link` before running the full-link form. |
+
+### Playbook format
+
+#### self-hosting-3
+
+Where the reserved `slc` pipeline links an `fsm` `.ts` object, the slc command shall produce the distinct `playbook` linked format as a `.ts` artifact at its [DR-001](../decisions/001-slc-pipeline-layout-naming-invocation.md) output location, whose runnable module is a `createPlaybookRuntime` factory driven through the host-side phase-runner facade [[phase-execution-23](phase-execution.md#phase-execution-23)], making it the artifact that a current pin selects for compiled execution [[phase-execution-27](phase-execution.md#phase-execution-27)] ([DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md), [DR-002](../decisions/002-slc-link-phases.md)).
+
+### Entry-module emission
+
+#### self-hosting-15
+
+Where a full-link run of the `playbook` pipeline has produced its linked artifact or a completion-only invocation has checked its retained bundle [[completion-3](completion.md#completion-3)], when the slc command settles deterministic outputs, the command shall apply the entry-module outcome for the applicable case, selecting the emitted generation from the gears role declaration alone — a `Roles` source emits the schema-3 entry and a historical `Players` source retains the schema-1 entry — without inspecting link-target provenance or factory compatibility ([DR-014](../decisions/014-cwd-output-invocation-defaults-entry-emission.md), [DR-017](../decisions/017-playbook-2-0-thin-runtime-adoption.md), [DR-024](../decisions/024-playbook-10-schema-3-adoption.md), [DR-054](../decisions/054-deterministic-bundle-completion.md)):
+
+| Case | Entry-module outcome |
+| --- | --- |
+| `-o` relocates the linked artifact. | Skip entry-module emission. |
+| `-o` is absent and the raw source physically aliases the selected entry path. | Preserve the compiled bundle, omit the entry, and report the diagnostic required by [[phase-execution-42](phase-execution.md#phase-execution-42)]. |
+| `-o` is absent; the entry path does not alias the raw source; and no two distinct declared role names collide case-insensitively. | Deterministically emit the workflow entry [[standalone-compilation-4](standalone-compilation.md#standalone-compilation-4)] — a true JavaScript `.mjs` module importing the linked module through the relative path derived from the actual artifact and entry directories, with its manifest header derived from those same locations and default-exporting a registry entry with `id` and `command` set to `<basename>`, `requiredRoleIds` set in source order to a `Roles` source's canonical lowercase local role ids — the exact ids its compiled machine's delegated states name — or to a historical `Players` source's verbatim non-alias declared names, `intent` derived from the normalized source's title and first prose paragraph (its hard-wrapped lines joined with single spaces, ending before a blank line, heading, comment, role-declaration label, or new list item whose `-`, `*`, `+`, `N.`, or `N)` marker is followed by whitespace) after skipping Markdown headings, comments, role-declaration labels (`Roles:` or historical `Players:`), and role-list bullets, falling back to the basename only when neither title nor prose exists, `validateOptions` selected through the artifact-owned or retained validation boundary [[self-hosting-17](#self-hosting-17)], and `createRuntime` validating its schema-3 first argument as the configured option slice, or a historical schema-1 first argument's `captainOptions`, through that boundary before calling the linked default factory once — a `Roles` source's entry additionally advertising `artifactSchema: 3`, a `runtimeProfile` holding exactly `kind` `shared-factory` and, as `compat`, the linked factory's own captured `{ artifactSchema, runtimeAbi }` compatibility record rather than any compiler-internal contract name, and the declared concurrent-role sets, composing the validated options with `createRuntime`'s second live-capability parameter into the factory's single `{ configuredOptions, hostCapabilities }` argument, and returning that factory call's runtime unchanged, while a historical `Players` source's entry wraps sessions passed to `init` and optional `restore` so a lowercased runtime player id maps back to its declared form and unknown ids and every other port, runtime member, and optional capability cross unchanged. |
+| `-o` is absent; the entry path does not alias the raw source; and two distinct declared role names collide case-insensitively. | Fail entry-module emission closed with a diagnostic. |
+
+#### self-hosting-17
+
+When emitting an entry's option boundary, the emitter shall apply this capability-based decision without inferring an option schema, invoking the runtime constructor, or using package version, date, or function arity ([DR-044](../decisions/044-artifact-owned-entry-options.md)):
+
+| Linked artifact | Entry validation and construction |
+| --- | --- |
+| Schema-3 artifact exports callable `validateOptions` | Import that function statically, require its TypeScript return type to satisfy the linked factory's configured-options type, and forward its synchronous validated snapshot unchanged with the separately supplied live host capabilities; the linked validator owns requiredness, defaults and JSON validation, including treating absent `undefined` as an empty option slice and rejecting null. |
+| Schema-3 artifact exports a non-callable `validateOptions` | Fail rather than silently falling back. |
+| Retained artifact has no validator export, or historical `Players` generation | Retain the existing fail-closed allowlist accepting only nonempty string `cwd` for a script workflow and no options otherwise, including absent-slice acceptance and script-only `process.cwd()` defaulting. |
+
+#### self-hosting-18
+
+Where a newly executed full link will produce a non-aliased canonical schema-3 entry [[self-hosting-15](#self-hosting-15)], the compiler shall enforce its public validator requirement through this execution sequence, without imposing the requirement on reused or standalone historical artifacts:
+
+1. Derive eligibility from the already produced GEARS role declaration and the planned entry output.
+2. Supply the public synchronous pure `validateOptions` contract to interpreted and compiled performing calls through their output-contract context.
+3. Include missing or non-callable exports, invalid accepted probe results, and strict validator-to-factory type incompatibility using the real linked and declared FSM filenames as ESM roots while preserving their relative imports in the existing bounded same-Coder mechanical findings [[phase-execution-56](phase-execution.md#phase-execution-56)].
+4. Probe only absent or empty option slices and universally invalid non-object inputs, allow validation rejection where real required options are unknown, and require accepted results to be plain JSON records without calling the runtime constructor or inventing a valid required catalog.
+5. Recheck custom executor output before link acceptance and preserve ordinary input protection and legacy entry fallback for exact incremental reuse.
+
+### Immutable definition adoption
+
+#### self-hosting-11
+
+Where the development dependency manifest declares `@sublang/playbook` as the exact immutable release the lock resolves and the ordinary `@sublang/cligent` dependency as a single stable caret range admitting its locked release or the exact coordinated candidate version [[release-30](release.md#release-30)] — with SLC’s direct Cligent requirement and Playbook’s transitive requirement each resolved by the lock — when the SLC repository maintains the current shared definition set, the adopted set shall contain a direct Cligent requirement whose minimum is at least `0.39.0`, using the stable caret form or the exact coordinated candidate form, the released `text2gears`, `gears2fsm`, `link`, `optimize`, and `prefix` definitions and their published sidecar-declared local inputs byte-identical to that installed release with those local inputs included in their semantic closures and their pin-input declarations carried by the SLC-owned `slc.pin-inputs.json` sidecar rather than inline `## Pin Inputs` sections, the three reviewed meta-phase artifact bundles as shared-factory schema-3 artifacts — each retained across an adoption when its definition declares a `## Compiled execution` section preserved verbatim in its GEARS [[verification-23](verification.md#verification-23)] and it passes its generated verification and the independent review against the installed engine, and rebuilt through interpreted real-agent runs only when its definition declares no such section or such a check fails — and every corresponding pin regenerated with that release's exact link-target provenance and the shared-engine `@sublang/playbook` runtime dependency recorded beside `xstate`; both demo reference sets shall be retained under the same rule with their checkers re-run against the installed engine; and the Playbook dependency manifest and lock, all five definitions and their local inputs, all three bundles, and `slc.pins.json` shall be accepted only as one current set produced from a clean registry install without a sibling checkout, so that adopting a Playbook release consists of raising the dependency, re-synchronizing the definitions byte-identically, regenerating the pins, and running the verification chain, with a decision record only where the engine's declared contract or a definition's compiled-execution section changes ([DR-061](../decisions/061-consumer-supplied-playbook.md), [DR-011](../decisions/011-playbook-1-0-captain-contract-adoption.md), [DR-018](../decisions/018-playbook-3-1-adoption.md), [DR-024](../decisions/024-playbook-10-schema-3-adoption.md), [DR-026](../decisions/026-slc-owned-pin-input-declarations.md), [DR-027](../decisions/027-complete-playbook-10-activation.md), [DR-028](../decisions/028-contract-based-adoption-without-recompilation.md), [[pinning-15](pinning.md#pinning-15)]).
+
+## Verification
+
+### Meta-pipeline runs
+
+#### self-hosting-4
+
+Where a fixture reserves an `slc` pipeline that chains `text2gears` and `gears2fsm` and a `link.md` emitting `playbook`, when meta-pipeline acceptance runs, the slc command shall produce the required outcome for each case ([DR-014](../decisions/014-cwd-output-invocation-defaults-entry-emission.md)):
+
+| Case | Required outcome |
+| --- | --- |
+| Run `slc slc <definition>` and then the same run with an explicit `--link <target>`. | Write the `fsm` object and a `playbook` artifact [[self-hosting-1](#self-hosting-1)] that resolves to a `createPlaybookRuntime` factory [[self-hosting-3](#self-hosting-3)] at their canonical locations under the working directory. |
+| The `slc` reference itself does not resolve. | Fail the run [[self-hosting-2](#self-hosting-2)]. |
+
+#### self-hosting-5
+
+Where the reserved `slc` resolves to the meta-pipeline definitions `@sublang/playbook` provides — whose `link.md` declares no `## Link Targets` — when the user runs `slc slc <definition> --link <target>`, the slc command shall chain those shared definitions [[self-hosting-2](#self-hosting-2)] and link the result to a `playbook` artifact [[self-hosting-3](#self-hosting-3)] at its canonical location under the working directory ([DR-014](../decisions/014-cwd-output-invocation-defaults-entry-emission.md)).
+
+#### self-hosting-7
+
+Where the `playbook` pipeline resolves to the definitions `@sublang/playbook` provides — whose `link.md` declares no `## Link Targets` — when the user runs `slc playbook <source> --link <target>`, the slc command shall resolve the `playbook` reference to those shared definitions [[self-hosting-6](#self-hosting-6)], load that target-less link, and write the `playbook` artifact into the working directory's `<basename>.playbook/` at its canonical name ([DR-014](../decisions/014-cwd-output-invocation-defaults-entry-emission.md)).
+
+#### self-hosting-8
+
+Where the `playbook` pipeline resolves to the definitions `@sublang/playbook` provides, when interpreted acceptance runs, the slc command shall produce the required outcome for each invocation:
+
+| Invocation | Required outcome |
+| --- | --- |
+| `slc playbook code.md --link <target>` | Write the `code.gears.md` intermediate, the `code.fsm.ts` object, and the `code.playbook.ts` runtime through the shared definition set [[self-hosting-6](#self-hosting-6)], each at its canonical location under the working directory's `code.playbook/`. |
+| `slc playbook code.md` | Run the same full-link form against the installed `@sublang/playbook` runtime as the default target [[self-hosting-13](#self-hosting-13)]. |
+
+#### self-hosting-16
+
+Where the `playbook` pipeline can produce a full-link linked artifact, when entry-module acceptance runs, the slc command shall produce the required outcome for each case:
+
+| Case | Required outcome |
+| --- | --- |
+| `-o` relocates the linked artifact | Write no entry module [[self-hosting-15](#self-hosting-15)]. |
+| `-o` is absent and the raw source aliases the canonical entry path | Preserve the bundle, preserve the source, omit the entry, and report the omission [[self-hosting-15](#self-hosting-15)]. |
+| `-o` is absent; the entry path does not alias the raw source; and no two distinct declared role names collide case-insensitively | Write the workflow entry [[self-hosting-15](#self-hosting-15)] default-exporting the source generation's registry entry — a historical `Players` fixture's schema-1 entry, or a `Roles` fixture's schema-3 entry advertising `artifactSchema: 3`, a `runtimeProfile` whose own `kind` is `shared-factory` and whose `compat` is the linked factory's own compatibility record by identity, and the declared concurrent-role sets and composing the `{ configuredOptions, hostCapabilities }` factory argument — whose `id` is `<basename>`, importing the linked module by its source-only relative specifier, and whose `createRuntime` hands the host's `callPlayer` port only ids the entry declares: a display-named `Roles` fixture's `requiredRoleIds` are the canonical lowercase role ids its FSM's delegated states name and reach the port unchanged, while a `Players` fixture's `requiredRoleIds` are the verbatim declared names, a lowercased declared id maps back to its declared form, an unknown id passes through, and the runtime's optional capabilities keep their presence [[self-hosting-15](#self-hosting-15)]; the entry performs the compiled workflow with no hand-written wiring through its generation's host [[self-hosting-14](#self-hosting-14)]. |
+| `-o` is absent; the entry path does not alias the raw source; and two distinct declared role names collide case-insensitively | Fail entry emission with a diagnostic [[self-hosting-15](#self-hosting-15)]. |
+| English or Chinese normalized source begins with a `Roles:` declaration; historical source begins with `Players:` | Emit the title and actual prose as `intent`, the title alone where no prose exists, or the basename where neither exists; preserve historical role declarations [[self-hosting-15](#self-hosting-15)]. |
+| Normalized source hard-wraps its first prose paragraph, including a line starting with `#` or `-` not followed by whitespace, before a heading or a new list item | Emit the title and the whole paragraph as `intent`, its lines joined with single spaces and nothing after its end included [[self-hosting-15](#self-hosting-15)]. |
+
+#### self-hosting-10
+
+When the slc command resolves the reserved `slc` and the `playbook` references, both shall produce the required outcome for the applicable case [[self-hosting-9](#self-hosting-9)]:
+
+| Case | Required outcome |
+| --- | --- |
+| A pipeline search root holds a `playbook` directory vendoring the shared definitions. | Resolve both references to that vendored directory. |
+| No search root provides a `playbook` directory. | Resolve both references to the definitions the installed `@sublang/playbook` provides. |
+
+### Artifact-owned option acceptance
+
+#### self-hosting-19
+
+Where real linked modules expose required structured, optional primitive, script, missing, malformed, asynchronous, or runtime-valid but factory-incompatible validator surfaces, when entry emission and an ordinary full-link correction flow run, the integration suite shall verify strict entry typing and validator-to-factory assignability, exact option and live-capability forwarding, no constructor calls during validation, invalid-input rejection, retained legacy behavior, and same-Coder repair before acceptance [[self-hosting-17](#self-hosting-17)] [[self-hosting-18](#self-hosting-18)].
+
+#### self-hosting-20
+
+Where a generated schema-3 entry requires a structured option, when the installed public Captain shell loads and starts it with that configured slice, the integration suite shall verify successful entry construction with the exact validated option values and unchanged live host capabilities, refusal of missing options before construction, and no provider or repository effects, while a historical `Players` entry retains its `captainOptions` envelope [[self-hosting-15](#self-hosting-15)].
+
+### Adoption acceptance
+
+#### self-hosting-12
+
+Where a clean registry install resolves the exact development `@sublang/playbook` and ordinary `@sublang/cligent` releases the lock names and the repository vendors the adopted shared definitions, when adoption acceptance runs, the reserved `slc` and `playbook` references shall both resolve to the vendored `text2gears`, `gears2fsm`, `link`, `optimize`, and `prefix` set and its published sidecar-declared local inputs byte-identical to that installed release with every such input in the corresponding semantic closure and pin-input declarations carried by the SLC-owned sidecar, all three reviewed artifact bundles shall pass their generated verification and independent reviews — compiled-execution fidelity included wherever a definition declares the section — as shared-factory schema-3 artifacts against the installed engine, every corresponding pin shall be current with that release's exact link-target provenance and the recorded shared-engine runtime dependency, both demo reference sets shall pass their checkers against the installed engine, and declaring a malformed Cligent range, a union, or a minimum below `0.39.0` or changing the Playbook dependency, any definition, bundle, or pin away from that one set shall make acceptance fail rather than pass a mixed version [[self-hosting-11](#self-hosting-11)].

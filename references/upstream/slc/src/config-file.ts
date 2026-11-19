@@ -1,0 +1,417 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+/**
+ * Config-file loader for the `slc` bin (DR-006, cli-20, cli-21).
+ *
+ * Discovers and parses the optional YAML config file that supplies the
+ * cligent-invocation defaults — Coder and optional Reviewer selection plus
+ * `pipelinePath` — which the environment then overrides (DR-006). Discovery
+ * reads `slc.config.yaml` in the working directory, then
+ * `${XDG_CONFIG_HOME:-~/.config}/slc/config.yaml`; an explicit `--config` path
+ * disables discovery and is an error when absent, while
+ * a discovery miss returns an empty result that falls through to the environment
+ * and defaults. The loader validates a flat schema and rejects unknown keys and
+ * mistyped values; the supported-agent check stays with `resolveAgentSelection`
+ * so the agent set keeps a single source of truth. Relative `pipelinePath`
+ * entries are returned verbatim and resolved against the cwd downstream
+ * (cli-6). See specs/packages/cli.md.
+ */
+
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { parse } from 'yaml';
+
+import { messageOf } from './errors.js';
+import { resolveCoverageBudget } from './verify-coverage.js';
+
+/**
+ * Largest stall timeout that stays representable as a timer delay (DR-019).
+ * Node clamps any `setTimeout` delay above 2^31-1 ms to 1 ms, so an
+ * out-of-range window would silently invert the watchdog and abort every
+ * agent call immediately; both configuration sources refuse it instead.
+ */
+export const MAX_STALL_TIMEOUT_SECONDS = Math.floor(2_147_483_647 / 1000);
+
+/** Config-file basename discovered in the working directory (DR-006). */
+export const CONFIG_FILE = 'slc.config.yaml';
+/** Config-file path under the user config home (DR-006). */
+export const HOME_CONFIG = join('slc', 'config.yaml');
+
+/** Bundled starter template seeded into the user config home on a discovery miss (DR-015). */
+const TEMPLATE_PATH = fileURLToPath(
+  new URL('./slc.config.template.yaml', import.meta.url),
+);
+
+/** Partial cligent-invocation selection loaded from a config file (DR-006). */
+export interface FileConfig {
+  agent?: string;
+  model?: string;
+  modelDefaults?: boolean;
+  subagentModel?: string | false;
+  effort?: string;
+  /** Literal adapter-scoped fast-mode request; omission is the agent CLI's default. */
+  fastMode?: boolean;
+  ultracode?: boolean;
+  /** Optional independent Reviewer; presence enables reviewed calls (DR-022). */
+  reviewerAgent?: string;
+  reviewerModel?: string;
+  reviewerSubagentModel?: string | false;
+  reviewerEffort?: string;
+  reviewerFastMode?: boolean;
+  reviewerUltracode?: boolean;
+  pipelinePath?: string[];
+  /** Agent-stall watchdog window in seconds; `0` disables (DR-019, cli-34). */
+  stallTimeout?: number;
+  coverageMaxInvocations?: number;
+  coverageMaxAttempts?: number;
+  coverageMaxDurationMs?: number;
+}
+
+/**
+ * A loaded config file: the parsed {@link FileConfig} plus the resolved file
+ * path, or `path: undefined` on a discovery miss (no file loaded).
+ */
+export interface LoadedFileConfig {
+  path?: string;
+  config: FileConfig;
+}
+
+/** Injectable IO for {@link loadConfigFile}; all fields default to the process. */
+export interface LoadConfigFileOptions {
+  cwd?: string;
+  /** Explicit `--config <path>`: disables discovery and errors when absent (cli-20, cli-21). */
+  configPath?: string;
+  /** User config home; defaults to `${XDG_CONFIG_HOME:-~/.config}`. Injectable for tests. */
+  configHome?: string;
+  /** Environment for resolving `XDG_CONFIG_HOME`; defaults to `process.env`. */
+  env?: Record<string, string | undefined>;
+  /** Called with the created path when a discovery miss seeds the user config (DR-015, cli-30). */
+  onSeed?: (path: string) => void;
+  /** Completion reads discovery without first-run agent configuration writes. */
+  seed?: boolean;
+}
+
+/** Machine-readable reason a config file was rejected (cli-21). */
+export type ConfigFileErrorCode =
+  'config-not-found' | 'config-parse' | 'config-invalid';
+
+/** Raised when an explicit `--config` file is missing, malformed, or invalid (cli-21). */
+export class ConfigFileError extends Error {
+  readonly code: ConfigFileErrorCode;
+
+  constructor(code: ConfigFileErrorCode, message: string) {
+    super(message);
+    this.name = 'ConfigFileError';
+    this.code = code;
+  }
+}
+
+/**
+ * Loads the slc config file (DR-006, cli-20, cli-21).
+ *
+ * Resolves the file via an explicit `--config` path or cwd/home discovery,
+ * parses and validates it, and returns the partial selection plus the resolved
+ * path. A discovery miss returns `{ config: {} }` so the caller falls through to
+ * the environment and built-in defaults.
+ *
+ * @throws {ConfigFileError} when an explicit `--config` path is absent
+ *   (`config-not-found`), the file is unreadable or malformed YAML
+ *   (`config-parse`), or it violates the flat schema (`config-invalid`).
+ */
+export async function loadConfigFile(
+  options: LoadConfigFileOptions = {},
+): Promise<LoadedFileConfig> {
+  const cwd = options.cwd ?? process.cwd();
+  const path = resolveConfigPath(options, cwd);
+  if (path === undefined) {
+    return { config: {} };
+  }
+  const config = await readConfigFile(path);
+  return { path, config };
+}
+
+function resolveConfigPath(
+  options: LoadConfigFileOptions,
+  cwd: string,
+): string | undefined {
+  if (options.configPath !== undefined) {
+    const explicit = isAbsolute(options.configPath)
+      ? options.configPath
+      : resolve(cwd, options.configPath);
+    if (!existsSync(explicit)) {
+      throw new ConfigFileError(
+        'config-not-found',
+        `--config file not found: ${options.configPath}`,
+      );
+    }
+    return explicit;
+  }
+
+  const cwdConfig = resolve(cwd, CONFIG_FILE);
+  if (existsSync(cwdConfig)) {
+    return cwdConfig;
+  }
+
+  const homeConfig = join(configHome(options), HOME_CONFIG);
+  if (existsSync(homeConfig)) {
+    return homeConfig;
+  }
+
+  if (options.seed === false) return undefined;
+
+  // First run: neither discovered file exists, so seed the user config from
+  // the bundled starter and load it (DR-015, cli-30).
+  mkdirSync(dirname(homeConfig), { recursive: true });
+  copyFileSync(TEMPLATE_PATH, homeConfig);
+  options.onSeed?.(homeConfig);
+  return homeConfig;
+}
+
+function configHome(options: LoadConfigFileOptions): string {
+  if (options.configHome !== undefined) {
+    return options.configHome;
+  }
+  const env = options.env ?? process.env;
+  const xdg = (env.XDG_CONFIG_HOME ?? '').trim();
+  return xdg !== '' ? xdg : join(homedir(), '.config');
+}
+
+async function readConfigFile(path: string): Promise<FileConfig> {
+  let source: string;
+  try {
+    source = await readFile(path, 'utf8');
+  } catch (error) {
+    throw new ConfigFileError(
+      'config-parse',
+      `Failed to read config file ${path}: ${messageOf(error)}`,
+    );
+  }
+
+  let raw: unknown;
+  try {
+    raw = parse(source) as unknown;
+  } catch (error) {
+    throw new ConfigFileError(
+      'config-parse',
+      `Failed to parse config file ${path}: ${messageOf(error)}`,
+    );
+  }
+
+  return normalizeFileConfig(raw, path);
+}
+
+const ALLOWED_KEYS = [
+  'agent',
+  'model',
+  'modelDefaults',
+  'subagentModel',
+  'reviewerSubagentModel',
+  'effort',
+  'fastMode',
+  'ultracode',
+  'reviewerAgent',
+  'reviewerModel',
+  'reviewerEffort',
+  'reviewerFastMode',
+  'reviewerUltracode',
+  'pipelinePath',
+  'stallTimeout',
+  'coverageMaxInvocations',
+  'coverageMaxAttempts',
+  'coverageMaxDurationMs',
+] as const;
+
+function normalizeFileConfig(value: unknown, path: string): FileConfig {
+  if (value === null || value === undefined) {
+    return {};
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new ConfigFileError(
+      'config-invalid',
+      `Config file ${path} must contain a mapping of keys to values`,
+    );
+  }
+
+  const input = value as Record<string, unknown>;
+  for (const key of Object.keys(input)) {
+    if (!(ALLOWED_KEYS as readonly string[]).includes(key)) {
+      throw new ConfigFileError(
+        'config-invalid',
+        `Unknown config key "${key}" in ${path}; allowed keys: ${ALLOWED_KEYS.join(', ')}`,
+      );
+    }
+  }
+
+  const config: FileConfig = {};
+  if (input.modelDefaults !== undefined)
+    config.modelDefaults = requireBoolean(
+      input.modelDefaults,
+      'modelDefaults',
+      path,
+    );
+  if (input.subagentModel !== undefined)
+    config.subagentModel =
+      input.subagentModel === false
+        ? false
+        : requireString(input.subagentModel, 'subagentModel', path);
+  if (input.reviewerSubagentModel !== undefined)
+    config.reviewerSubagentModel =
+      input.reviewerSubagentModel === false
+        ? false
+        : requireString(
+            input.reviewerSubagentModel,
+            'reviewerSubagentModel',
+            path,
+          );
+  if (input.agent !== undefined) {
+    config.agent = requireString(input.agent, 'agent', path);
+  }
+  if (input.model !== undefined) {
+    config.model = requireString(input.model, 'model', path);
+  }
+  if (input.effort !== undefined) {
+    config.effort = requireString(input.effort, 'effort', path);
+  }
+  if (input.ultracode !== undefined) {
+    config.ultracode = requireBoolean(input.ultracode, 'ultracode', path);
+  }
+  if (input.reviewerUltracode !== undefined) {
+    config.reviewerUltracode = requireBoolean(
+      input.reviewerUltracode,
+      'reviewerUltracode',
+      path,
+    );
+  }
+  if (input.fastMode !== undefined) {
+    config.fastMode = requireBoolean(input.fastMode, 'fastMode', path);
+  }
+  if (input.reviewerAgent !== undefined) {
+    config.reviewerAgent = requireString(
+      input.reviewerAgent,
+      'reviewerAgent',
+      path,
+    );
+  }
+  if (input.reviewerModel !== undefined) {
+    config.reviewerModel = requireString(
+      input.reviewerModel,
+      'reviewerModel',
+      path,
+    );
+  }
+  if (input.reviewerEffort !== undefined) {
+    config.reviewerEffort = requireString(
+      input.reviewerEffort,
+      'reviewerEffort',
+      path,
+    );
+  }
+  if (input.reviewerFastMode !== undefined) {
+    config.reviewerFastMode = requireBoolean(
+      input.reviewerFastMode,
+      'reviewerFastMode',
+      path,
+    );
+  }
+  if (input.pipelinePath !== undefined) {
+    config.pipelinePath = requireStringArray(
+      input.pipelinePath,
+      'pipelinePath',
+      path,
+    );
+  }
+  if (input.stallTimeout !== undefined) {
+    config.stallTimeout = requireSeconds(
+      input.stallTimeout,
+      'stallTimeout',
+      path,
+    );
+  }
+  try {
+    const coverage = resolveCoverageBudget({
+      maxInvocations: input.coverageMaxInvocations as number | undefined,
+      maxAttempts: input.coverageMaxAttempts as number | undefined,
+      maxDurationMs: input.coverageMaxDurationMs as number | undefined,
+    });
+    if (input.coverageMaxInvocations !== undefined)
+      config.coverageMaxInvocations = coverage.maxInvocations;
+    if (input.coverageMaxAttempts !== undefined)
+      config.coverageMaxAttempts = coverage.maxAttempts;
+    if (input.coverageMaxDurationMs !== undefined)
+      config.coverageMaxDurationMs = coverage.maxDurationMs;
+  } catch (error) {
+    throw new ConfigFileError(
+      'config-invalid',
+      `Config file ${path}: ${messageOf(error)}`,
+    );
+  }
+  return config;
+}
+
+function requireSeconds(value: unknown, key: string, path: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new ConfigFileError(
+      'config-invalid',
+      `Config key "${key}" in ${path} must be a non-negative number of seconds`,
+    );
+  }
+  if (value > MAX_STALL_TIMEOUT_SECONDS) {
+    throw new ConfigFileError(
+      'config-invalid',
+      `Config key "${key}" in ${path} must be at most ${MAX_STALL_TIMEOUT_SECONDS} seconds ` +
+        '(use 0 to disable the stall watchdog)',
+    );
+  }
+  return value;
+}
+
+/**
+ * Fast mode is a plain YAML boolean: `false` is a literal request, so the
+ * string forms are refused rather than coerced (cli-7).
+ */
+function requireBoolean(value: unknown, key: string, path: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new ConfigFileError(
+      'config-invalid',
+      `Config key "${key}" in ${path} must be a boolean (true or false)`,
+    );
+  }
+  return value;
+}
+
+function requireString(value: unknown, key: string, path: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new ConfigFileError(
+      'config-invalid',
+      `Config key "${key}" in ${path} must be a non-empty string`,
+    );
+  }
+  return value;
+}
+
+function requireStringArray(
+  value: unknown,
+  key: string,
+  path: string,
+): string[] {
+  if (!Array.isArray(value)) {
+    throw new ConfigFileError(
+      'config-invalid',
+      `Config key "${key}" in ${path} must be a sequence of strings`,
+    );
+  }
+  return value.map((entry, index) => {
+    if (typeof entry !== 'string' || entry.trim() === '') {
+      throw new ConfigFileError(
+        'config-invalid',
+        `Config key "${key}[${index}]" in ${path} must be a non-empty string`,
+      );
+    }
+    return entry;
+  });
+}

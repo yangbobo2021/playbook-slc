@@ -1,0 +1,977 @@
+{
+  "schema": "playbook-slc.upstream.v1",
+  "captured_at": "2026-11-19T01:36:51.026162+00:00",
+  "selection_sha256": "59108c48fb928546c98da4a06613b3a6453f2fec04b7d525387377ba2cca5673",
+  "repositories": [
+    {
+      "name": "slc",
+      "url": "https://github.com/sublang-ai/slc",
+      "requested_ref": "origin/main",
+      "commit": "787b7a427a789a0b85baf02e35c4fa8d2cdee682",
+      "version": "0.23.0",
+      "license": "Apache-2.0",
+      "purpose": "CLI、配置、执行修正、检查器、审计、构建与入口",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "bytes": 11357,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "db6d1166080f6af9316f666af03fa493885810f9fb2d64e6e83daebc7fe34fe9",
+          "bytes": 18715,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/README.md"
+        },
+        {
+          "path": "package.json",
+          "sha256": "348ebbe6ed72eb6102da90c69507c4f4dc2ef0637439e6f798d460aae4d72923",
+          "bytes": 2964,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/package.json"
+        },
+        {
+          "path": "pipelines/playbook/gears2fsm.md",
+          "sha256": "634f47e8635aa01dc09e88fab72e7894e27a70c5af54649bf85df92e3769b7ce",
+          "bytes": 65273,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/gears2fsm.md"
+        },
+        {
+          "path": "pipelines/playbook/gears2fsm.slc/gears2fsm.gears.md",
+          "sha256": "4692510d65af0a5d251f3c25607c5dcfb185f2a8c5b54bfa778f91defad1364e",
+          "bytes": 1090,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/gears2fsm.slc/gears2fsm.gears.md"
+        },
+        {
+          "path": "pipelines/playbook/gears2fsm.slc/gears2fsm.gears.raw.md",
+          "sha256": "4692510d65af0a5d251f3c25607c5dcfb185f2a8c5b54bfa778f91defad1364e",
+          "bytes": 1090,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/gears2fsm.slc/gears2fsm.gears.raw.md"
+        },
+        {
+          "path": "pipelines/playbook/link.md",
+          "sha256": "aaedd63cbb66fb857f033b1cdfa0c316ebf301f8e63cfca76967e3d28f6dbc80",
+          "bytes": 179716,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/link.md"
+        },
+        {
+          "path": "pipelines/playbook/link.slc/link.gears.md",
+          "sha256": "5016d885ae1f1f1c998cd4c0dcea2a579cd81550f80be1c5f64fb1335f9cecb5",
+          "bytes": 1061,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/link.slc/link.gears.md"
+        },
+        {
+          "path": "pipelines/playbook/link.slc/link.gears.raw.md",
+          "sha256": "5016d885ae1f1f1c998cd4c0dcea2a579cd81550f80be1c5f64fb1335f9cecb5",
+          "bytes": 1061,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/link.slc/link.gears.raw.md"
+        },
+        {
+          "path": "pipelines/playbook/materialize-link.mjs",
+          "sha256": "60d4254c37d64454da9160fbb0d8f63911ca73a78fe927be94ee2073646c12d1",
+          "bytes": 29943,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/materialize-link.mjs"
+        },
+        {
+          "path": "pipelines/playbook/optimize.md",
+          "sha256": "3c1d305691bcf6a776916d99fccf3921fda018bedef33c9be51edb3e8f2d6576",
+          "bytes": 6323,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/optimize.md"
+        },
+        {
+          "path": "pipelines/playbook/prefix-prompts.mjs",
+          "sha256": "a79f8de13ce25185b908fbc0ef5f848db35f100c25086d9033ddcaf9f3f96470",
+          "bytes": 7502,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/prefix-prompts.mjs"
+        },
+        {
+          "path": "pipelines/playbook/prefix.md",
+          "sha256": "e693100fe59af46d63d6a2e1bb3aaa1ff841d2396a9f0cfb384aa4a0e2152abe",
+          "bytes": 9511,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/prefix.md"
+        },
+        {
+          "path": "pipelines/playbook/text2gears.md",
+          "sha256": "5eecdc1f1cecfa7f59aae6181c78868a0939568cd49d9d43daf155ce17a22545",
+          "bytes": 40480,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/text2gears.md"
+        },
+        {
+          "path": "pipelines/playbook/text2gears.slc/text2gears.gears.md",
+          "sha256": "9e92dbfa80d9b64e84acbae748a3f0720d742dab356af0dbcddc9287f35090c0",
+          "bytes": 1076,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/text2gears.slc/text2gears.gears.md"
+        },
+        {
+          "path": "pipelines/playbook/text2gears.slc/text2gears.gears.raw.md",
+          "sha256": "9e92dbfa80d9b64e84acbae748a3f0720d742dab356af0dbcddc9287f35090c0",
+          "bytes": 1076,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/text2gears.slc/text2gears.gears.raw.md"
+        },
+        {
+          "path": "pipelines/playbook/workflow-contracts.json",
+          "sha256": "ffb802c4a542a8289cd24b0a06fee4321ec712771035aa61f1f25b71baae796b",
+          "bytes": 12305,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/pipelines/playbook/workflow-contracts.json"
+        },
+        {
+          "path": "specs/decisions/009-slc-playbook-pipeline-compilation.md",
+          "sha256": "b76060b24e4c87685ac76e52447f7448e63d007c594d6fa75a13fa61ca3b8921",
+          "bytes": 10356,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/decisions/009-slc-playbook-pipeline-compilation.md"
+        },
+        {
+          "path": "specs/decisions/022-two-agent-reviewed-compilation.md",
+          "sha256": "a0dc1c91dd9dc79ff6c69df854fecce019f8de996827c205752a8a76b79186f2",
+          "bytes": 6875,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/decisions/022-two-agent-reviewed-compilation.md"
+        },
+        {
+          "path": "specs/decisions/024-playbook-10-schema-3-adoption.md",
+          "sha256": "f9ca0fae995f194b1dd04df64bf05f1c03fdfda10918b053c29fe8e67157b310",
+          "bytes": 17587,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/decisions/024-playbook-10-schema-3-adoption.md"
+        },
+        {
+          "path": "specs/decisions/029-source-fidelity-gate.md",
+          "sha256": "2aafb8fd1f29b945a5132e801e32ac97fcc5c01aac1c8c3983e4e36048457821",
+          "bytes": 4643,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/decisions/029-source-fidelity-gate.md"
+        },
+        {
+          "path": "specs/decisions/033-early-conformance-and-mechanical-repair.md",
+          "sha256": "b1da233cd4204cdf210491cb386630ab4659455c9234e3da9db94567a5009e92",
+          "bytes": 2623,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/decisions/033-early-conformance-and-mechanical-repair.md"
+        },
+        {
+          "path": "specs/decisions/058-topology-bound-boss-questions.md",
+          "sha256": "95734713ea1bbb2a595894eb9f367a2aedbf41d412862e352abdd6a951274323",
+          "bytes": 2637,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/decisions/058-topology-bound-boss-questions.md"
+        },
+        {
+          "path": "specs/packages/clarification.md",
+          "sha256": "2ea1eba20e3a2e3fe758c3f2a57660bb6a6798e4f0962e1caf4240f36eaf1475",
+          "bytes": 5670,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/clarification.md"
+        },
+        {
+          "path": "specs/packages/cli.md",
+          "sha256": "76cc3ca23d4051d82f8730f0173d30904ffdcae2d87c56e355d8d06d779a6ab4",
+          "bytes": 31422,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/cli.md"
+        },
+        {
+          "path": "specs/packages/compilation-measurement.md",
+          "sha256": "2a33d8803ec4bf15113a07f1b37ed2307bfe0a2053e1ae042dce3659872c93ba",
+          "bytes": 16731,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/compilation-measurement.md"
+        },
+        {
+          "path": "specs/packages/compiler.md",
+          "sha256": "d43ab4221d8ad65ce316963a58a0357906a2b8e56ee5eec8c72599d222482756",
+          "bytes": 9091,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/compiler.md"
+        },
+        {
+          "path": "specs/packages/completion.md",
+          "sha256": "4858fcf199cc39fc4b98ddb604af992ca3d315e501c1281f2978531857741414",
+          "bytes": 6846,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/completion.md"
+        },
+        {
+          "path": "specs/packages/continuous-integration.md",
+          "sha256": "d733b27809c9e73707fc6f22d699ff5c7cb2a4755d58c5d276207aae755b7994",
+          "bytes": 14479,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/continuous-integration.md"
+        },
+        {
+          "path": "specs/packages/delivery-acceptance.md",
+          "sha256": "6680eee95f4d584998a163d157c49a145ab57a561d2946d058a82fb6530ea992",
+          "bytes": 8723,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/delivery-acceptance.md"
+        },
+        {
+          "path": "specs/packages/git.md",
+          "sha256": "648eb12f6dd2dd5b9c9cebc14708de1a6d2184b698dfeacce93102995878e14a",
+          "bytes": 2234,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/git.md"
+        },
+        {
+          "path": "specs/packages/incremental-compilation.md",
+          "sha256": "6aa96fdd6c7e5f8e7c13e4f714f493f6c6525d3c6e49d89cb46202b03467df56",
+          "bytes": 19686,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/incremental-compilation.md"
+        },
+        {
+          "path": "specs/packages/licensing.md",
+          "sha256": "7a08e109f0314e9b3297d2d791b635afb183c0815775690690497a9ac720a95b",
+          "bytes": 3714,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/licensing.md"
+        },
+        {
+          "path": "specs/packages/phase-execution.md",
+          "sha256": "4ea77e3edabaa12d3f880f1419a9e46667b213c623d37b87cd0f2f70c11e56c8",
+          "bytes": 71583,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/phase-execution.md"
+        },
+        {
+          "path": "specs/packages/pinning.md",
+          "sha256": "19e40070956a27a86c6e1850146d46db5d12c304fae205f654ad1d9877f7fd0f",
+          "bytes": 17953,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/pinning.md"
+        },
+        {
+          "path": "specs/packages/pipeline.md",
+          "sha256": "e35be4dd795a46d257d9019d4ecce3e1de5d8e6f9faac5db67b506379539c1a7",
+          "bytes": 19993,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/pipeline.md"
+        },
+        {
+          "path": "specs/packages/release.md",
+          "sha256": "24bb99cde5d6f72bc9c7f436c60b3470241232533d9d33712f52bd3fce89458d",
+          "bytes": 27222,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/release.md"
+        },
+        {
+          "path": "specs/packages/self-hosting.md",
+          "sha256": "cb52dadab507b4bee6d1918902b5eb83ab975f5f7569f06ee1dd61ebdb7fd4cc",
+          "bytes": 25037,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/self-hosting.md"
+        },
+        {
+          "path": "specs/packages/standalone-compilation.md",
+          "sha256": "5fb1208c404aa1726837d2fd6c658658703705d9fcd661514108e1c7c251ac0e",
+          "bytes": 12123,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/standalone-compilation.md"
+        },
+        {
+          "path": "specs/packages/verification.md",
+          "sha256": "26388991505f5ded4426fb984888ea435269e0a61fc04f4b4a833adfea3d355a",
+          "bytes": 146898,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/verification.md"
+        },
+        {
+          "path": "specs/packages/workflow-acceptance.md",
+          "sha256": "87fa6f1975b8cb034a8b41b13539063628509e29b2bd01e624e95056ebcfe8ff",
+          "bytes": 6298,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/specs/packages/workflow-acceptance.md"
+        },
+        {
+          "path": "src/app.ts",
+          "sha256": "7fa81fc3f04b0068d4f15963462884b1f4dd498fb9aacb52c2170bb81612b208",
+          "bytes": 20728,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/app.ts"
+        },
+        {
+          "path": "src/artifacts.ts",
+          "sha256": "b3ac3ad2e3b5e1cea272624d8fbbfcc86ee3dca8f4488bc5c20d085c85c735ff",
+          "bytes": 6331,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/artifacts.ts"
+        },
+        {
+          "path": "src/build-history.ts",
+          "sha256": "3207553dafd58252a2bc3a92823ed493ea20cbdbbef9e1b6833ed21120c723f8",
+          "bytes": 11682,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/build-history.ts"
+        },
+        {
+          "path": "src/check-report.ts",
+          "sha256": "2b3aded603ff3b196f1a664c515b79574b0d453f8a7e6f34a3a80e352deabdc4",
+          "bytes": 2444,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/check-report.ts"
+        },
+        {
+          "path": "src/clarification.ts",
+          "sha256": "856a2105cb3f8ad29c42a50d83a0435328f970f417ddc838255e2fe46fb8d26d",
+          "bytes": 5523,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/clarification.ts"
+        },
+        {
+          "path": "src/cli.ts",
+          "sha256": "fb96a398fda4bc4555af9a0f0829385b1b0e3e397a319dcab5800f526baabd28",
+          "bytes": 2810,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/cli.ts"
+        },
+        {
+          "path": "src/cligent-agent.ts",
+          "sha256": "e43df8c1440983ec7bdde9d7215926618336ffb57901306eb4ba737b6bef39d9",
+          "bytes": 13374,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/cligent-agent.ts"
+        },
+        {
+          "path": "src/compilation-audit.ts",
+          "sha256": "e2d1aec811f684c29b05cbf1233dc549b373c403d872c9bb92b6720d296f3be5",
+          "bytes": 2761,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/compilation-audit.ts"
+        },
+        {
+          "path": "src/compiled-execution.ts",
+          "sha256": "9aff17e99f7020e8d9e8802f223beb42ffc2409a46a10e809daa910a67881027",
+          "bytes": 8947,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/compiled-execution.ts"
+        },
+        {
+          "path": "src/compiled-executor.ts",
+          "sha256": "6606339f0f0318fd652321cd726e9f4c38641be0cef45c9a8829d88ae7a3188e",
+          "bytes": 32466,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/compiled-executor.ts"
+        },
+        {
+          "path": "src/compiler-identity.ts",
+          "sha256": "11bdd778f6e4f7b75f326c50abc293930ec18a887d1923b9288b932efe70ebfb",
+          "bytes": 2322,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/compiler-identity.ts"
+        },
+        {
+          "path": "src/config-file.ts",
+          "sha256": "be5f6188efefb67570ebac534c2d7b086a46dafb15214662f45a50352bf040c4",
+          "bytes": 13252,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/config-file.ts"
+        },
+        {
+          "path": "src/config.ts",
+          "sha256": "8df6e6f8690dff67f1c96aea60ab3c1020a1d6e04fda5e2a89a2990c6c1286a1",
+          "bytes": 20237,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/config.ts"
+        },
+        {
+          "path": "src/emitted-imports.ts",
+          "sha256": "03ed7fb6a669e32685e1eb96b108e6258c77bcefe697d0b35bf245832086a7d1",
+          "bytes": 7461,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/emitted-imports.ts"
+        },
+        {
+          "path": "src/entry-module.ts",
+          "sha256": "8c1d8a5276791cab9ba6ddcb45f83590bfee253d173df27fa95d15242bc9d2bd",
+          "bytes": 18418,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/entry-module.ts"
+        },
+        {
+          "path": "src/entry-options.ts",
+          "sha256": "1173ca7ef29a440ad9d772a7327a624432b7e1e838987b6d3c393b745a1c602d",
+          "bytes": 5441,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/entry-options.ts"
+        },
+        {
+          "path": "src/errors.ts",
+          "sha256": "cfef3f047f15f3b9e153f149adefc8f640616bcc6b0f48abe5476bb93c7f3622",
+          "bytes": 1408,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/errors.ts"
+        },
+        {
+          "path": "src/execution.ts",
+          "sha256": "5878b0d29adedd15e0cc03cbc7b48c28ed6308eed1e1162080e0296b1c1012c8",
+          "bytes": 22852,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/execution.ts"
+        },
+        {
+          "path": "src/hash.ts",
+          "sha256": "39f9ebfca65b8211a024117417c5a4fac2f4b6f23f89da7109dc0a66423d22dd",
+          "bytes": 3658,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/hash.ts"
+        },
+        {
+          "path": "src/index.ts",
+          "sha256": "f2d883d7a3d63d938bcdea415c3d50c5325bf3c812544ec0333ac2828fb9d2af",
+          "bytes": 956,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/index.ts"
+        },
+        {
+          "path": "src/interpreter.ts",
+          "sha256": "0eebd01bdd5b2be4c0ad28e2527d5e23544326aa8c2147c784fb2f0f854eaf46",
+          "bytes": 8876,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/interpreter.ts"
+        },
+        {
+          "path": "src/invocation.ts",
+          "sha256": "08d1cbde2bc07fd2503dbe8e4e104102a20622724792172b41cdc5cb144bf9b2",
+          "bytes": 8091,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/invocation.ts"
+        },
+        {
+          "path": "src/isolated-check.ts",
+          "sha256": "f973b2b373385bb1d21a5e651be38d5b81ae0f7439429cdc563c09cf1fddbc83",
+          "bytes": 6926,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/isolated-check.ts"
+        },
+        {
+          "path": "src/line-diff.ts",
+          "sha256": "10ad712454f878c4fc7afe1a3dcfe0c1e135838d72ee81ad175d5af42fa24ac1",
+          "bytes": 2309,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/line-diff.ts"
+        },
+        {
+          "path": "src/link.ts",
+          "sha256": "251483fb67e277c4bd55061cc5913fbdbffc72674adbedde1b20bde4984a56a7",
+          "bytes": 8804,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/link.ts"
+        },
+        {
+          "path": "src/managed-compilation.ts",
+          "sha256": "c7d0dba6021f8e731d0cee6c87dc2ddfd50e39d5ca68b700056d1023b9dacb09",
+          "bytes": 16227,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/managed-compilation.ts"
+        },
+        {
+          "path": "src/markdown.ts",
+          "sha256": "0779eff09698d49643f952bb784a65742be95a599933662a19fe3aba07bb779d",
+          "bytes": 1883,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/markdown.ts"
+        },
+        {
+          "path": "src/normalize.md",
+          "sha256": "4f041512ec5d450f8dc0a763837e2934c6e92faa0fcd85a771ebfb2131a7b57d",
+          "bytes": 2848,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/normalize.md"
+        },
+        {
+          "path": "src/phase-runner.ts",
+          "sha256": "9dbaa6789af86c5335ef637befc42a0b97a043e4886344bcc2d3f3b086b87723",
+          "bytes": 15481,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/phase-runner.ts"
+        },
+        {
+          "path": "src/phase.ts",
+          "sha256": "85b07d11f4682ae755cc4d19924514aec84e13dc0abdd96928897d5fa589ed94",
+          "bytes": 6384,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/phase.ts"
+        },
+        {
+          "path": "src/pin-closure.ts",
+          "sha256": "843e9c65f68ebd39e62b898e11f389d739144c50f35a1a3ddc6a9626389dfcf9",
+          "bytes": 9896,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/pin-closure.ts"
+        },
+        {
+          "path": "src/pin-currency.ts",
+          "sha256": "3fd6385d744a4a6a2ddb996bd70c8e988b368678d83234c0e4547ac88bb49224",
+          "bytes": 22212,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/pin-currency.ts"
+        },
+        {
+          "path": "src/pin-generate.ts",
+          "sha256": "2c641905a59c2409fcb88d89afe17567a410dc63f438d50c380950c2b9a4a862",
+          "bytes": 9189,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/pin-generate.ts"
+        },
+        {
+          "path": "src/pin-inputs.ts",
+          "sha256": "7bedd9b7c8b4b51030ea275c8be9da401a20820f8295d3eca88e1635a0d819d7",
+          "bytes": 7875,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/pin-inputs.ts"
+        },
+        {
+          "path": "src/pin-paths.ts",
+          "sha256": "a8311fc133a29114171c4319fb1005d9244334fdec580f8c17452d6bba55330c",
+          "bytes": 4516,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/pin-paths.ts"
+        },
+        {
+          "path": "src/pins.ts",
+          "sha256": "df233dadbe51db43417cfc0439a87d20f6ed7b91d3cd3139f3ac1bb6844a6863",
+          "bytes": 13519,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/pins.ts"
+        },
+        {
+          "path": "src/pipeline.ts",
+          "sha256": "365de7592603ff513e741baf07322f2eb02e416d3559bda28fb4f0a53422e36b",
+          "bytes": 6930,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/pipeline.ts"
+        },
+        {
+          "path": "src/playbook-contract.ts",
+          "sha256": "0feaa93721c132f402ea5d654bf27f41f5e82282a8f3158bf257ea0475ae552f",
+          "bytes": 16986,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/playbook-contract.ts"
+        },
+        {
+          "path": "src/playbook-ports.ts",
+          "sha256": "2ee5c703f65a96ded43800b768fa36283970799579fc510275a248ef91eafc41",
+          "bytes": 14591,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/playbook-ports.ts"
+        },
+        {
+          "path": "src/progress.ts",
+          "sha256": "8a4a21312df41ae72e68e15282f1b3368f39f9fbd2883dedc4c509749ffdffe5",
+          "bytes": 5390,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/progress.ts"
+        },
+        {
+          "path": "src/resolver.ts",
+          "sha256": "a433187a335fdf8095f142ac74271ef56aa219f4880e2e26094af7b276e6de77",
+          "bytes": 6196,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/resolver.ts"
+        },
+        {
+          "path": "src/reviewing-agent.ts",
+          "sha256": "c905b3a3e8940f5b00eb8ad385e85d4b282c422cd06f1b21ac036683de839324",
+          "bytes": 22898,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/reviewing-agent.ts"
+        },
+        {
+          "path": "src/runner.ts",
+          "sha256": "a67bced329f17eda9b78669689da9a310c3a476e9268e1ce8bbde86a300eaf9f",
+          "bytes": 92012,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/runner.ts"
+        },
+        {
+          "path": "src/runtime-contract.ts",
+          "sha256": "1ce1cfa46ccfa995d68507ba0e6572e956eba431a7bcaffc19517911609ed107",
+          "bytes": 4754,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/runtime-contract.ts"
+        },
+        {
+          "path": "src/runtime-package.ts",
+          "sha256": "70467e8fc526eb0d21e9be0553881799bc4283c0fe7b10df7ab326ecc95aa409",
+          "bytes": 4638,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/runtime-package.ts"
+        },
+        {
+          "path": "src/ultracode.ts",
+          "sha256": "ef2d47fab2d95b7d34473dc7822fa76413a7f95e6c202d810caa270509997f05",
+          "bytes": 486,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/ultracode.ts"
+        },
+        {
+          "path": "src/verification-worker.ts",
+          "sha256": "dafb61c16f0a0fd78f071bc41e31f78a78e55d7a7ccebdd88244323d7c8339b3",
+          "bytes": 9107,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/verification-worker.ts"
+        },
+        {
+          "path": "src/verify-coverage.ts",
+          "sha256": "2eb5e0ad98d6303f783b5df1f0b5c807ebbad59b766876859ca8d3f7b5c81388",
+          "bytes": 210354,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/verify-coverage.ts"
+        },
+        {
+          "path": "src/verify-source.ts",
+          "sha256": "c3c5cbe7855dba8745a432e5f9f272d35851e780e953281c2cc0150096882802",
+          "bytes": 38445,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/verify-source.ts"
+        },
+        {
+          "path": "src/verify-support.ts",
+          "sha256": "2b09f709452c7fde88ce9bfa687fa5b9ae356755907301af3a2f9c149e2c514d",
+          "bytes": 2761,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/verify-support.ts"
+        },
+        {
+          "path": "src/verify-typescript.ts",
+          "sha256": "4a5b824b10fd49e639d299e7b310f8a451c8205b75989a3ef738f111effcb4a6",
+          "bytes": 3355,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/verify-typescript.ts"
+        },
+        {
+          "path": "src/verify.ts",
+          "sha256": "defe855341d17d0aa675b1146f74e1733df2583b5e6d0dec80c325462f3228a2",
+          "bytes": 215192,
+          "url": "https://github.com/sublang-ai/slc/blob/787b7a427a789a0b85baf02e35c4fa8d2cdee682/src/verify.ts"
+        }
+      ]
+    },
+    {
+      "name": "playbook",
+      "url": "https://github.com/sublang-ai/playbook",
+      "requested_ref": "origin/main",
+      "commit": "6f56876ba0c04f86b3630782290673ab16068607",
+      "version": "19.1.0",
+      "license": "Apache-2.0",
+      "purpose": "权威阶段定义、运行时、仓库效果、恢复与宿主加载",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "bytes": 11357,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "d5ec7a2015df8079a7f6113988813b8e30ba606ee70221f1870657617d0d4f13",
+          "bytes": 10817,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/README.md"
+        },
+        {
+          "path": "package.json",
+          "sha256": "3803d13ea19fdbaa8d4ff30c28ea5813743da242c69197b7af1d8f477a4f5eb8",
+          "bytes": 13944,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/package.json"
+        },
+        {
+          "path": "reference/sdlc/code.playbook/bin/adapter-sdk.js",
+          "sha256": "8bbdc7546f1e00747bc7671227461a275347f9e53eeb648b702b090c29525d1c",
+          "bytes": 11574,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/reference/sdlc/code.playbook/bin/adapter-sdk.js"
+        },
+        {
+          "path": "reference/sdlc/code.playbook/bin/playbook.js",
+          "sha256": "f6a879b6fb092bf21b3b47efeafcea4ec19a81c42d2f8b899d5a34202b4bfc6c",
+          "bytes": 38984,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/reference/sdlc/code.playbook/bin/playbook.js"
+        },
+        {
+          "path": "reference/sdlc/code.playbook/bin/repository-effects.js",
+          "sha256": "0361f52e21fa612e165ac4a6c471185e0ea9ae1c6e6e1367ec510580dcb80c59",
+          "bytes": 116211,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/reference/sdlc/code.playbook/bin/repository-effects.js"
+        },
+        {
+          "path": "reference/sdlc/code.playbook/bin/run.js",
+          "sha256": "defea74d8f54f7e7b681807cef7fc4b616a83792e720299f46d9eedb7b2e587e",
+          "bytes": 74331,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/reference/sdlc/code.playbook/bin/run.js"
+        },
+        {
+          "path": "reference/sdlc/code.playbook/bin/session-host.js",
+          "sha256": "a4d7d97c7ccb03d3315949debbd1d12efd0c2014d637d21851855443aa7103be",
+          "bytes": 10484,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/reference/sdlc/code.playbook/bin/session-host.js"
+        },
+        {
+          "path": "reference/sdlc/code.playbook/bin/session-replay.js",
+          "sha256": "4bbc7385310a838cd4aacf4b5bc6242b2723c5b68f3dd1fa901f00581aae54ba",
+          "bytes": 16899,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/reference/sdlc/code.playbook/bin/session-replay.js"
+        },
+        {
+          "path": "reference/sdlc/code.playbook/bin/session-store.js",
+          "sha256": "a113948fe2ebf6c7161c02086b5b0d4c5fb8cb3a710577ec98b8906ffb9fb6a7",
+          "bytes": 254273,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/reference/sdlc/code.playbook/bin/session-store.js"
+        },
+        {
+          "path": "reference/sdlc/code.playbook/code.registry.ts",
+          "sha256": "e5fdb7ac2abf44e2a5a203848e80b18f5696907d1904c257f2e857af847fcb8c",
+          "bytes": 3619,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/reference/sdlc/code.playbook/code.registry.ts"
+        },
+        {
+          "path": "reference/sdlc/code.playbook/host-capabilities.js",
+          "sha256": "857a380713c653f0e6a7c8e2656e711402bb474e30deb0ae8fa3181ece7d2b81",
+          "bytes": 1324,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/reference/sdlc/code.playbook/host-capabilities.js"
+        },
+        {
+          "path": "slc/experiments/fsm-scaffold-guidance.md",
+          "sha256": "a8ae5b6f50e61a1e35e04509805d343e4400a1944ecd70d82d0d26cb40f88336",
+          "bytes": 3129,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/slc/experiments/fsm-scaffold-guidance.md"
+        },
+        {
+          "path": "slc/gears2fsm.md",
+          "sha256": "634f47e8635aa01dc09e88fab72e7894e27a70c5af54649bf85df92e3769b7ce",
+          "bytes": 65273,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/slc/gears2fsm.md"
+        },
+        {
+          "path": "slc/link.md",
+          "sha256": "aaedd63cbb66fb857f033b1cdfa0c316ebf301f8e63cfca76967e3d28f6dbc80",
+          "bytes": 179716,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/slc/link.md"
+        },
+        {
+          "path": "slc/materialize-link.mjs",
+          "sha256": "60d4254c37d64454da9160fbb0d8f63911ca73a78fe927be94ee2073646c12d1",
+          "bytes": 29943,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/slc/materialize-link.mjs"
+        },
+        {
+          "path": "slc/optimize.md",
+          "sha256": "3c1d305691bcf6a776916d99fccf3921fda018bedef33c9be51edb3e8f2d6576",
+          "bytes": 6323,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/slc/optimize.md"
+        },
+        {
+          "path": "slc/prefix-prompts.mjs",
+          "sha256": "a79f8de13ce25185b908fbc0ef5f848db35f100c25086d9033ddcaf9f3f96470",
+          "bytes": 7502,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/slc/prefix-prompts.mjs"
+        },
+        {
+          "path": "slc/prefix.md",
+          "sha256": "e693100fe59af46d63d6a2e1bb3aaa1ff841d2396a9f0cfb384aa4a0e2152abe",
+          "bytes": 9511,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/slc/prefix.md"
+        },
+        {
+          "path": "slc/scaffold-fsm.mjs",
+          "sha256": "05da23190c9a2409bd624c97ae00a754ca1f424f0d976bab3a17c06eeb2b5fab",
+          "bytes": 10992,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/slc/scaffold-fsm.mjs"
+        },
+        {
+          "path": "slc/text2gears.md",
+          "sha256": "5eecdc1f1cecfa7f59aae6181c78868a0939568cd49d9d43daf155ce17a22545",
+          "bytes": 40480,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/slc/text2gears.md"
+        },
+        {
+          "path": "slc/workflow-contracts.json",
+          "sha256": "ffb802c4a542a8289cd24b0a06fee4321ec712771035aa61f1f25b71baae796b",
+          "bytes": 12305,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/slc/workflow-contracts.json"
+        },
+        {
+          "path": "specs/decisions/040-outcome-authority-effect-reconciliation.md",
+          "sha256": "2ea82e56a0af3f41a1eae5f494053dac3f40d9f959072845e14ffb9b5071f5a7",
+          "bytes": 30117,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/decisions/040-outcome-authority-effect-reconciliation.md"
+        },
+        {
+          "path": "specs/decisions/046-public-worktree-host-capabilities.md",
+          "sha256": "49f4020474c45cb3a517a07090c129f0908965cb30339d2f65501844c0e0ca4f",
+          "bytes": 3508,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/decisions/046-public-worktree-host-capabilities.md"
+        },
+        {
+          "path": "specs/decisions/062-pre-existing-changes-are-context.md",
+          "sha256": "b18813627c32902660d2f3548b89be57b44966261419529ea69d8a901a85c995",
+          "bytes": 6859,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/decisions/062-pre-existing-changes-are-context.md"
+        },
+        {
+          "path": "specs/decisions/069-captain-prepares-step-recovery.md",
+          "sha256": "eae4e96baa7e716c85ff97c8c696be4e7ccc5e1cb29acca0813ff6bdab001c7a",
+          "bytes": 7981,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/decisions/069-captain-prepares-step-recovery.md"
+        },
+        {
+          "path": "specs/decisions/088-a-commit-outcome-takes-every-new-commit.md",
+          "sha256": "cd22bf07b46c805f6064fdc78fbe07aac537b7db60e63d6c6a674a2d759a2e3d",
+          "bytes": 7118,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/decisions/088-a-commit-outcome-takes-every-new-commit.md"
+        },
+        {
+          "path": "specs/decisions/090-every-role-hears-the-boss.md",
+          "sha256": "2ceeac003a9e47804369cad0a74e6e53ae791d03e97cbbd47a13e29246d888ec",
+          "bytes": 7857,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/decisions/090-every-role-hears-the-boss.md"
+        },
+        {
+          "path": "specs/packages/artifact-environment.md",
+          "sha256": "9b65dd0cead1dc74dbcb4a686ed427d4d96b2426691642d46fc73c3e0908ba6c",
+          "bytes": 12639,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/artifact-environment.md"
+        },
+        {
+          "path": "specs/packages/captain-playbook.md",
+          "sha256": "ca7e382ada489efa537bfff1f584c81537fdd6642af4c63e21ae3f2f50ad0a8b",
+          "bytes": 35593,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/captain-playbook.md"
+        },
+        {
+          "path": "specs/packages/compiler-child-validation.md",
+          "sha256": "45def05c4f84ad042a47ab7958b5fb47b92ba493bc6de667bc305acbf37e1aed",
+          "bytes": 2664,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-child-validation.md"
+        },
+        {
+          "path": "specs/packages/compiler-entry-options.md",
+          "sha256": "00026b68ce8bce56cf3f4a4b29cebc3758cf186c9610168185013c54b87db788",
+          "bytes": 3865,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-entry-options.md"
+        },
+        {
+          "path": "specs/packages/compiler-nested-calls.md",
+          "sha256": "07a622beb6fe0994602049d7e443706c41475da81d2e0283988a8ca5771ecfd8",
+          "bytes": 2844,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-nested-calls.md"
+        },
+        {
+          "path": "specs/packages/compiler-nested-tags.md",
+          "sha256": "f89bb6918cf9d05ffebbbe0323a85730ca16ffc7875593e0655290afd2f97934",
+          "bytes": 1538,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-nested-tags.md"
+        },
+        {
+          "path": "specs/packages/compiler-optimization.md",
+          "sha256": "f33e6b771a1bb7221ba9df38ed441a5bb3ea09f7e4c8671fda84d87d57f121aa",
+          "bytes": 2166,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-optimization.md"
+        },
+        {
+          "path": "specs/packages/compiler-prompt-prefix.md",
+          "sha256": "f8964aa2f337a6a44cbd5e8ccef5d7cc3a1c0dc6daf167ad72595c2de06e43d9",
+          "bytes": 11106,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-prompt-prefix.md"
+        },
+        {
+          "path": "specs/packages/compiler-prompt-relays.md",
+          "sha256": "4a718e7327f87cc998f7166cb5eb97d2b116ff540d75ed299fac327e1e4661f0",
+          "bytes": 5928,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-prompt-relays.md"
+        },
+        {
+          "path": "specs/packages/compiler-results.md",
+          "sha256": "e01b928af89e6c3af31f890017468a95d18c8b39fc8aa569e4f5d1fc8e84eb95",
+          "bytes": 15154,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-results.md"
+        },
+        {
+          "path": "specs/packages/compiler-source-state.md",
+          "sha256": "80ec39afcd79027d85f7aa965203c2704164e68c282f082968a1fc5f2e8cd48e",
+          "bytes": 7757,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-source-state.md"
+        },
+        {
+          "path": "specs/packages/compiler-state-identity.md",
+          "sha256": "b9d5c43654c2294196435cd0962a063264f5291898fb680bd2c5e0c8e259905e",
+          "bytes": 1482,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-state-identity.md"
+        },
+        {
+          "path": "specs/packages/compiler-verification.md",
+          "sha256": "2fdd9d18abacc10dd154c164ade81ceb7df78584d951fa497a850590c75f5f94",
+          "bytes": 2796,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-verification.md"
+        },
+        {
+          "path": "specs/packages/compiler-workflow-contracts.md",
+          "sha256": "05891b6c9dccaa59a90dcfb53f78e904f2f77f0536452b2b19181c269dd3ac9f",
+          "bytes": 7077,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/compiler-workflow-contracts.md"
+        },
+        {
+          "path": "specs/packages/cross-references.md",
+          "sha256": "1f0df55886a27ba964c3999e5f4b1878e5d5c3e7a4f5214dfe3d87fe5f89d721",
+          "bytes": 4976,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/cross-references.md"
+        },
+        {
+          "path": "specs/packages/fsm-scaffolding.md",
+          "sha256": "bc34b973897a6fd9f8bbdb050c35ba9c97fefc0f7f4e2277675cdfbc402b2460",
+          "bytes": 5755,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/fsm-scaffolding.md"
+        },
+        {
+          "path": "specs/packages/git.md",
+          "sha256": "648eb12f6dd2dd5b9c9cebc14708de1a6d2184b698dfeacce93102995878e14a",
+          "bytes": 2234,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/git.md"
+        },
+        {
+          "path": "specs/packages/licensing.md",
+          "sha256": "15d8f71ceb6da5382b7d922dbac82571d2a55d99c9f140f5bf9252d3666e004b",
+          "bytes": 3930,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/licensing.md"
+        },
+        {
+          "path": "specs/packages/link-experiments.md",
+          "sha256": "6483b48ec08a55cf71146b71c1a884d1d381c6220b68224545f6cddee89d98de",
+          "bytes": 13626,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/link-experiments.md"
+        },
+        {
+          "path": "specs/packages/link-materialization.md",
+          "sha256": "cba90395e006546b265622012da88f664788ac045c3594852d3c16b6649f96fd",
+          "bytes": 15173,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/link-materialization.md"
+        },
+        {
+          "path": "specs/packages/playbook-captain.md",
+          "sha256": "c6df71f97cb43448b01d2ef41fb99bfe18d33e9434b0258c9a9e4bfaf8210681",
+          "bytes": 250235,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/playbook-captain.md"
+        },
+        {
+          "path": "specs/packages/playbook-cli.md",
+          "sha256": "414eadd8159f51505cd0757130ffbb76a54542dbbd44046cbed8872eb372d15d",
+          "bytes": 270060,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/playbook-cli.md"
+        },
+        {
+          "path": "specs/packages/playbook-runtime.md",
+          "sha256": "e4026e40328c53bb19b8fdc62eab0bbf31ed70d09fd30e70d75ba5aae9e79125",
+          "bytes": 242588,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/playbook-runtime.md"
+        },
+        {
+          "path": "specs/packages/playbook.md",
+          "sha256": "006d117ac156a5fcd4f1acc7480676ca0b05b06b410f5594b75126ff462e386d",
+          "bytes": 71982,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/playbook.md"
+        },
+        {
+          "path": "specs/packages/recovery.md",
+          "sha256": "6c85c97db1d3c62b129ce30c848668a4056c5619f4bc26b642cdba0a5fd097d8",
+          "bytes": 33529,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/recovery.md"
+        },
+        {
+          "path": "specs/packages/release.md",
+          "sha256": "2d941b3a181f741822e7f5fdc68ea9a2b8dd591d900bbf77b44d16eebe67bf13",
+          "bytes": 101214,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/release.md"
+        },
+        {
+          "path": "specs/packages/session-assets.md",
+          "sha256": "f4129bd184684d4798521d9118d3b9af4c9f997d0a4de69196c76de31e6a9bf5",
+          "bytes": 7259,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/session-assets.md"
+        },
+        {
+          "path": "specs/packages/session-persistence.md",
+          "sha256": "3da88a649daccbea2d26e832ce7f2d3b34a24f301e897308b52a51a081e1b8a7",
+          "bytes": 16929,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/session-persistence.md"
+        },
+        {
+          "path": "specs/packages/session-storage.md",
+          "sha256": "23cc45963aa9e4a521089a9cb5b3568f8c46f1586b83f1325f8828943afd8672",
+          "bytes": 33241,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/specs/packages/session-storage.md"
+        },
+        {
+          "path": "src/accepted-outcome.ts",
+          "sha256": "268691de7d346a92d3f0747e9c03c9ea62c9ef3489e21809868e1941d8d5e688",
+          "bytes": 4484,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/src/accepted-outcome.ts"
+        },
+        {
+          "path": "src/artifact-environment.ts",
+          "sha256": "f1b73e750fe2bdec93d9573ca9c75138b5d822a774572d613b2f6bd708899eba",
+          "bytes": 20531,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/src/artifact-environment.ts"
+        },
+        {
+          "path": "src/artifact-files.ts",
+          "sha256": "b39a38aec508378e8110f70fa0017a68dfcb78578a8e42f01bc70ca1fd5e43e3",
+          "bytes": 7162,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/src/artifact-files.ts"
+        },
+        {
+          "path": "src/fresh-artifact.ts",
+          "sha256": "3e5e4ca6ef0f713941145a8a69197e64510ed508c3778e565503540bbee40515",
+          "bytes": 8249,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/src/fresh-artifact.ts"
+        },
+        {
+          "path": "src/runtime.ts",
+          "sha256": "43316f5093b329a35378930eb65a65c20e17a990aab133b5046289e61a130387",
+          "bytes": 32419,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/src/runtime.ts"
+        },
+        {
+          "path": "src/script-output.ts",
+          "sha256": "6713110d12524f74ba09f5b8a385e79c68b8f88757d0022ac29eaf6fe211a2a9",
+          "bytes": 13639,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/src/script-output.ts"
+        },
+        {
+          "path": "src/xstate-playbook-runtime.ts",
+          "sha256": "9692614d4474e34837e992e43b79d646386dd1f101ea710ef8af3543de26ae1d",
+          "bytes": 453938,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/src/xstate-playbook-runtime.ts"
+        },
+        {
+          "path": "src/xstate-runtime.ts",
+          "sha256": "c7771268ed08179769e69890539d40954ca238c57e52e7769cbbe5a4fdd645d8",
+          "bytes": 151358,
+          "url": "https://github.com/sublang-ai/playbook/blob/6f56876ba0c04f86b3630782290673ab16068607/src/xstate-runtime.ts"
+        }
+      ]
+    }
+  ]
+}

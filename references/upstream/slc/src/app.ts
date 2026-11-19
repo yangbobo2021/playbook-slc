@@ -1,0 +1,515 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+/**
+ * The `slc` bin orchestrator (`cli` package).
+ *
+ * `run` is the testable command-line entry: it short-circuits `--version` and
+ * `--help` before touching any pipeline or agent (cli-1, cli-2, cli-9), builds
+ * the run dependencies from environment configuration (cli-6, cli-7, cli-12),
+ * invokes the injectable `runSlc` core under a cancellation signal (cli-10), and
+ * maps the result onto process streams and an exit code — produced artifact
+ * paths to stdout on success, the failure report to stderr otherwise (cli-3,
+ * cli-4, cli-11). Every IO seam is injectable so the bin is integration-testable
+ * without a real agent; the `cli.ts` shim supplies the process-backed defaults
+ * and signal wiring. See specs/packages/cli.md.
+ */
+
+import { createRequire } from 'node:module';
+
+import { messageOf } from './errors.js';
+import {
+  resolveCoverageBudget,
+  type CoverageBudget,
+} from './verify-coverage.js';
+import {
+  createConfiguredCompiledFactory,
+  createConfiguredExecutor,
+  resolveAgentSelection,
+  type AgentSelection,
+} from './config.js';
+import {
+  loadConfigFile,
+  MAX_STALL_TIMEOUT_SECONDS,
+  type FileConfig,
+} from './config-file.js';
+import { createProgressReporter, type ProgressSink } from './progress.js';
+import { parseInvocation } from './invocation.js';
+import {
+  createPipelineResolver,
+  pipelineSearchRoots,
+  withReservedPipelines,
+} from './resolver.js';
+import { runSlc, type SlcDeps } from './runner.js';
+
+const manifest = createRequire(import.meta.url)('../package.json') as {
+  version?: unknown;
+};
+if (typeof manifest.version !== 'string') {
+  throw new TypeError('package.json version must be a string');
+}
+const packageVersion = manifest.version;
+
+/** The program name. */
+export const name = 'slc';
+
+/** Returns the slc version string. */
+export function version(): string {
+  return packageVersion;
+}
+
+/** Builds run dependencies for a run; injected by tests to supply fakes. */
+export type DepsBuilder = (io: {
+  env: Record<string, string | undefined>;
+  cwd: string;
+  signal: AbortSignal;
+  /** Explicit `--config <path>`, when given (cli-20). */
+  configPath?: string;
+  /** Sink for host notes such as first-run config seeding (DR-015, cli-30). */
+  note?: (text: string) => void;
+  /** The run's progress sink, rendered to stderr by the bin (DR-019, cli-35). */
+  progress?: ProgressSink;
+}) => SlcDeps | Promise<SlcDeps>;
+
+/** Injectable IO and configuration for {@link run}; all fields default to the process. */
+export interface RunOptions {
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+  stdout?: (text: string) => void;
+  stderr?: (text: string) => void;
+  /** Cancellation signal passed into `runSlc` (cli-10). */
+  signal?: AbortSignal;
+  /** Overrides production dependency construction (cli-6, cli-7). */
+  buildDeps?: DepsBuilder;
+}
+
+/** The executor factory {@link buildSlcDeps} uses; injected in tests. */
+export type ExecutorFactory = typeof createConfiguredExecutor;
+
+/** The compiled-execution factory builder {@link buildSlcDeps} uses; injected in tests. */
+export type CompiledFactoryBuilder = typeof createConfiguredCompiledFactory;
+
+/**
+ * Builds the production {@link SlcDeps}: a pipeline resolver over the resolved
+ * search roots (cli-6) — with the reserved `slc` reference routed to the
+ * meta-pipeline definitions `@sublang/playbook` provides (self-hosting-2) — an
+ * interpreted executor for the resolved agent/model (cli-7), and the
+ * compiled-execution factory a current pinned phase selects (cli-8, phase-execution-27).
+ * Configuration is loaded from the config file (DR-006, cli-20) and
+ * then overridden per key by a non-blank environment variable, so existing
+ * env-only runs are unchanged and the file fills any key the environment leaves
+ * unset.
+ *
+ * @throws {import('./config-file.js').ConfigFileError} when an explicit
+ *   `--config` path is absent or the file is malformed or invalid (cli-21).
+ * @throws {import('./config.js').ConfigError} when neither source supplies an
+ *   agent, or the resolved agent is unsupported (cli-12).
+ */
+export async function buildSlcDeps(
+  { env, cwd, signal, configPath, note, progress }: Parameters<DepsBuilder>[0],
+  // Injectable so a test can capture the executor options — notably the
+  // non-interactive write permission below — without constructing a real
+  // adapter, the same seam pattern as `createConfiguredExecutor`'s
+  // `adapterFactory`. Defaults to the production factories.
+  createExecutor: ExecutorFactory = createConfiguredExecutor,
+  createCompiled: CompiledFactoryBuilder = createConfiguredCompiledFactory,
+): Promise<SlcDeps> {
+  const file = await loadConfigFile({
+    cwd,
+    configPath,
+    env,
+    // First-run seeding (DR-015): name the created user config on stderr.
+    onSeed: (path) => note?.(`slc: seeded ${path} (agent: claude-code)\n`),
+  });
+  const { selection, pipelinePath, stallTimeoutMs, coverage } =
+    resolveRunConfig(env, file.config);
+  const resolver = withReservedPipelines(
+    createPipelineResolver(pipelineSearchRoots(pipelinePath, cwd)),
+  );
+  // Auto-accept the agents' file operations so a non-interactive `slc` run can
+  // write its target artifact; the DR-003 generic checks still guard the
+  // protected inputs (DR-004). The stall watchdog rides every constructed
+  // transport (DR-019, cli-35).
+  const agentOpts = {
+    cwd,
+    permissions: { mode: 'auto' as const },
+    stallTimeoutMs,
+  };
+  const executor = createExecutor(selection, agentOpts);
+  // Compiled-runtime status streams to the same reporter as phase progress
+  // (phase-execution-25, cli-32).
+  const compiled = createCompiled(selection, {
+    ...agentOpts,
+    onStatus:
+      progress === undefined
+        ? undefined
+        : (line: string) => progress({ kind: 'status', text: line }),
+  });
+  return {
+    resolver,
+    executor,
+    compiled,
+    cwd,
+    signal,
+    progress,
+    coverage,
+    auditConfiguration: { selection, pipelinePath, stallTimeoutMs, coverage },
+  };
+}
+
+/** Resolver-only dependencies: no agent selection, construction, or seeding. */
+async function buildCompletionDeps({
+  env,
+  cwd,
+  signal,
+  configPath,
+  progress,
+}: Parameters<DepsBuilder>[0]): Promise<SlcDeps> {
+  const file = await loadConfigFile({ cwd, configPath, env, seed: false });
+  const pipelinePath =
+    nonBlank(env.SLC_PIPELINE_PATH) ?? file.config.pipelinePath;
+  const coverage = resolveCoverageConfig(env, file.config);
+  return {
+    resolver: withReservedPipelines(
+      createPipelineResolver(pipelineSearchRoots(pipelinePath, cwd)),
+    ),
+    executor: {
+      run: async () => {
+        throw new Error('completion cannot execute a compiler phase');
+      },
+    },
+    cwd,
+    signal,
+    progress,
+    coverage,
+  };
+}
+
+/** The cligent-invocation selection after merging environment over file (DR-006). */
+export interface RunConfig {
+  coverage: Readonly<Required<CoverageBudget>>;
+  selection: AgentSelection;
+  /** Search-root source: an `SLC_PIPELINE_PATH` string, the file's sequence, or undefined. */
+  pipelinePath: string | string[] | undefined;
+  /** Agent-stall watchdog window in milliseconds; `0` disables (DR-019, cli-34). */
+  stallTimeoutMs: number;
+}
+
+/** Default agent-stall watchdog window in seconds (DR-019, DR-043, cli-34). */
+export const DEFAULT_STALL_TIMEOUT_SECONDS = 2400;
+
+/**
+ * Merges the environment over config-file values per key (DR-006, cli-20): for
+ * each key a non-blank environment variable wins, otherwise the file value,
+ * otherwise the built-in default. The agent and model go through
+ * {@link resolveAgentSelection} so the supported-agent check stays single-sourced
+ * (cli-7, cli-12); the stall timeout defaults to
+ * {@link DEFAULT_STALL_TIMEOUT_SECONDS} with `0` disabling the watchdog
+ * (DR-019, cli-34).
+ *
+ * @throws {Error} when `SLC_STALL_TIMEOUT` is not a non-negative number.
+ */
+export function resolveRunConfig(
+  env: Record<string, string | undefined>,
+  file: FileConfig,
+): RunConfig {
+  const selection = resolveAgentSelection(
+    {
+      ...env,
+      SLC_AGENT: nonBlank(env.SLC_AGENT) ?? file.agent,
+      SLC_MODEL: nonBlank(env.SLC_MODEL) ?? file.model,
+      SLC_SUBAGENT_MODEL:
+        nonBlank(env.SLC_SUBAGENT_MODEL) ??
+        (file.subagentModel === false ? 'false' : file.subagentModel),
+      SLC_REVIEWER_SUBAGENT_MODEL:
+        nonBlank(env.SLC_REVIEWER_SUBAGENT_MODEL) ??
+        (file.reviewerSubagentModel === false
+          ? 'false'
+          : file.reviewerSubagentModel),
+      SLC_EFFORT: nonBlank(env.SLC_EFFORT) ?? file.effort,
+      SLC_FAST_MODE: nonBlank(env.SLC_FAST_MODE) ?? flag(file.fastMode),
+      SLC_ULTRACODE: nonBlank(env.SLC_ULTRACODE) ?? flag(file.ultracode),
+      SLC_REVIEWER_ULTRACODE:
+        nonBlank(env.SLC_REVIEWER_ULTRACODE) ?? flag(file.reviewerUltracode),
+      SLC_REVIEWER_AGENT:
+        nonBlank(env.SLC_REVIEWER_AGENT) ?? file.reviewerAgent,
+      SLC_REVIEWER_MODEL:
+        nonBlank(env.SLC_REVIEWER_MODEL) ?? file.reviewerModel,
+      SLC_REVIEWER_EFFORT:
+        nonBlank(env.SLC_REVIEWER_EFFORT) ?? file.reviewerEffort,
+      SLC_REVIEWER_FAST_MODE:
+        nonBlank(env.SLC_REVIEWER_FAST_MODE) ?? flag(file.reviewerFastMode),
+    },
+    { modelDefaults: file.modelDefaults },
+  );
+  const pipelinePath = nonBlank(env.SLC_PIPELINE_PATH) ?? file.pipelinePath;
+  const stallSeconds =
+    parseStallTimeout(nonBlank(env.SLC_STALL_TIMEOUT)) ??
+    file.stallTimeout ??
+    DEFAULT_STALL_TIMEOUT_SECONDS;
+  return {
+    selection,
+    pipelinePath,
+    stallTimeoutMs: stallSeconds * 1000,
+    coverage: resolveCoverageConfig(env, file),
+  };
+}
+
+export function resolveCoverageConfig(
+  env: Record<string, string | undefined>,
+  file: FileConfig,
+) {
+  const invocations = nonBlank(env.SLC_COVERAGE_MAX_INVOCATIONS);
+  const attempts = nonBlank(env.SLC_COVERAGE_MAX_ATTEMPTS);
+  const duration = nonBlank(env.SLC_COVERAGE_MAX_DURATION_MS);
+  return resolveCoverageBudget({
+    maxInvocations:
+      invocations === undefined
+        ? file.coverageMaxInvocations
+        : Number(invocations),
+    maxAttempts:
+      attempts === undefined ? file.coverageMaxAttempts : Number(attempts),
+    maxDurationMs:
+      duration === undefined ? file.coverageMaxDurationMs : Number(duration),
+  });
+}
+
+function parseStallTimeout(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    throw new Error(
+      `SLC_STALL_TIMEOUT "${value}" must be a non-negative number of seconds (0 disables the stall watchdog)`,
+    );
+  }
+  // Beyond the timer range Node clamps the delay to 1 ms, which would abort
+  // every agent call at once — refuse rather than invert the watchdog.
+  if (seconds > MAX_STALL_TIMEOUT_SECONDS) {
+    throw new Error(
+      `SLC_STALL_TIMEOUT "${value}" must be at most ${MAX_STALL_TIMEOUT_SECONDS} seconds (0 disables the stall watchdog)`,
+    );
+  }
+  return seconds;
+}
+
+/** Returns `value` when set and not all-whitespace, else `undefined` (DR-006). */
+function nonBlank(value: string | undefined): string | undefined {
+  return value !== undefined && value.trim() !== '' ? value : undefined;
+}
+
+/**
+ * Renders a file boolean in the exact `true`/`false` form its environment
+ * variable accepts, so one resolver validates both sources (cli-7); a
+ * literal `false` stays a request, and an absent key stays absent.
+ */
+function flag(value: boolean | undefined): string | undefined {
+  return value === undefined ? undefined : String(value);
+}
+
+/** Usage text naming the documented invocation forms and configuration (cli-2). */
+export function usageText(): string {
+  return [
+    'Usage:',
+    '  slc <pipeline>[.<phase>] <source> [-o <target>]',
+    '  slc <pipeline> <source> [--normalize] [--no-optimize] [--link <target>] [--link-option name=value]...',
+    '  slc <pipeline>.link <object>... <target> [-o <linked>] [--link-option name=value]...',
+    '  slc playbook <entry-form-source> --complete [--link <retained-target>]',
+    '',
+    'Artifacts land in the working directory (<cwd>/<basename>.<pipeline>/);',
+    'an entry source with a foreign extension is normalized first, and the',
+    'playbook pipeline links against the installed @sublang/playbook runtime',
+    'when --link is omitted, also emitting the runnable <basename>.mjs entry.',
+    'Each playbook uses one automatic workflow-owned environment inside its',
+    'artifact directory; no project-root Node setup is required.',
+    'Unresolved source behavior exits 2 with questions on stderr; edit the',
+    'original source and run the same command again. No interactive answers.',
+    '',
+    'Options:',
+    '  -o <path>                 final output path override',
+    '  --link <target>           link the full-pipeline output to <target>',
+    '  --link-option name=value  pass an opaque option to the link phase',
+    "  --normalize               rewrite raw input to the entry phase's source form first",
+    "  -O, --optimize            run the pipeline's pass phases (the default)",
+    '  --no-optimize             run the chain without pass phases',
+    '  --rebuild                 recompile every phase, ignoring recorded build history',
+    '  --complete                check a retained canonical playbook bundle and emit',
+    '                            verification files and its entry; no agents or history',
+    '  --config <path>           load configuration from <path> (disables discovery)',
+    '  -v, --version             print version and exit',
+    '  -h, --help                print this help and exit',
+    '',
+    'Configuration:',
+    '  Config file (YAML), discovered in order, then overridden per key by the',
+    '  environment variable below:',
+    '    ./slc.config.yaml',
+    '    ${XDG_CONFIG_HOME:-~/.config}/slc/config.yaml',
+    '  Keys: agent, model, modelDefaults, subagentModel, effort, fastMode,',
+    '        reviewerAgent, reviewerModel, reviewerSubagentModel,',
+    '        reviewerEffort, reviewerFastMode, ultracode, reviewerUltracode, pipelinePath, stallTimeout.',
+    '',
+    '  SLC_AGENT          agent CLI: claude-code | codex | gemini | opencode',
+    '  SLC_MODEL          optional model for the agent CLI',
+    '  SLC_SUBAGENT_MODEL native subagent model: a model ID, inherit, or false',
+    '  SLC_REVIEWER_SUBAGENT_MODEL native Reviewer subagent model: a model ID, inherit, or false',
+    '  SLC_ULTRACODE     optional native Ultracode boolean (true or false)',
+    '  SLC_REVIEWER_ULTRACODE optional independent Reviewer Ultracode boolean',
+    '  SLC_EFFORT         optional adapter-scoped reasoning effort (e.g. xhigh)',
+    '  SLC_FAST_MODE      optional adapter-scoped fast mode: true | false',
+    '                     (omit for the agent CLI default)',
+    '  SLC_REVIEWER_AGENT optional independent reviewer; enables reviewed compilation',
+    '  SLC_REVIEWER_MODEL optional model for the reviewer agent CLI',
+    '  SLC_REVIEWER_EFFORT optional adapter-scoped reviewer reasoning effort',
+    '  SLC_REVIEWER_FAST_MODE optional adapter-scoped reviewer fast mode: true | false',
+    '  SLC_PIPELINE_PATH  search roots for <pipeline> references (default: cwd)',
+    '  SLC_COVERAGE_MAX_INVOCATIONS  coverageMaxInvocations: 1..64 (default: 8)',
+    '  SLC_COVERAGE_MAX_ATTEMPTS     coverageMaxAttempts: 1..1024 (default: 64)',
+    '  SLC_COVERAGE_MAX_DURATION_MS coverageMaxDurationMs: 1..1800000 (default: 300000)',
+    '                     duration ceiling; smaller derived allowances still apply',
+    '  SLC_STALL_TIMEOUT  seconds of agent inactivity before a stalled call',
+    '                     fails the run (default: 2400; 0 disables)',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Splits `--config <path>` out of argv, returning the path and the remaining
+ * arguments for `runSlc` (cli-20). `--config` is a bin-level flag, so it is
+ * removed before the grammar parser, which rejects unknown options.
+ *
+ * @throws {Error} when `--config` is given without a following value.
+ */
+function extractConfigFlag(argv: readonly string[]): {
+  configPath?: string;
+  rest: string[];
+} {
+  const rest: string[] = [];
+  let configPath: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--config') {
+      const value = argv[++i];
+      if (value === undefined) {
+        throw new Error('missing value for --config <path>');
+      }
+      configPath = value;
+    } else {
+      rest.push(argv[i]);
+    }
+  }
+  return { configPath, rest };
+}
+
+/** Recognizes the mode flag without treating an ordinary option value as it. */
+function requestsCompletion(argv: readonly string[]): boolean {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--complete') return true;
+    if (['-o', '--link', '--link-option'].includes(argv[i])) i++;
+  }
+  return false;
+}
+
+/**
+ * Runs the `slc` command line and returns a process exit code (`cli` package).
+ * Never rejects: configuration refusals and run failures are reported and
+ * mapped to a non-zero code.
+ */
+export async function run(
+  argv: readonly string[],
+  options: RunOptions = {},
+): Promise<number> {
+  const stdout = options.stdout ?? ((text) => void process.stdout.write(text));
+  const stderr = options.stderr ?? ((text) => void process.stderr.write(text));
+
+  // Conveniences short-circuit before any pipeline or agent work (cli-1, cli-2, cli-9).
+  if (hasFlag(argv, '--version', '-v')) {
+    stdout(`${name} ${version()}\n`);
+    return 0;
+  }
+  if (hasFlag(argv, '--help', '-h')) {
+    stdout(usageText());
+    return 0;
+  }
+
+  const env = options.env ?? process.env;
+  const cwd = options.cwd ?? process.cwd();
+  const signal = options.signal ?? new AbortController().signal;
+  // In-run progress renders on stderr as it happens, with the silence-bounded
+  // heartbeat (DR-019, cli-32, cli-33, cli-35).
+  const reporter = createProgressReporter(stderr);
+
+  let deps: SlcDeps;
+  let rest: readonly string[];
+  try {
+    // `--config <path>` is a bin-level flag: strip it before runSlc, whose
+    // grammar (parseInvocation) rejects unknown options (cli-20).
+    const extracted = extractConfigFlag(argv);
+    rest = extracted.rest;
+    // Only the explicit no-agent mode needs grammar validation before config
+    // work. Ordinary invocations retain first-run seeding even when incomplete.
+    const completing =
+      requestsCompletion(rest) && parseInvocation(rest).kind === 'complete';
+    const build =
+      options.buildDeps ?? (completing ? buildCompletionDeps : buildSlcDeps);
+    deps = await build({
+      env,
+      cwd,
+      signal,
+      configPath: extracted.configPath,
+      note: stderr,
+      progress: reporter.sink,
+    });
+  } catch (error) {
+    // Configuration refusals — a bad `--config`, an invalid config file
+    // (cli-21), or an unset/unsupported agent (cli-12) — fail the run.
+    reporter.dispose();
+    stderr(`${name}: ${messageOf(error)}\n`);
+    return 1;
+  }
+
+  let result;
+  try {
+    result = await runSlc(rest, deps);
+  } finally {
+    reporter.dispose();
+  }
+
+  if (result.ok) {
+    if (result.outcome === 'up-to-date') stdout('up to date\n');
+    else if (result.outputs.length > 0)
+      stdout(`${result.outputs.join('\n')}\n`);
+    // Surface benign ambiguity resolved during the run without polluting paths.
+    if (result.diagnostics.length > 0)
+      stderr(`${result.diagnostics.join('\n')}\n`);
+    return 0;
+  }
+  if (result.diagnostics.length > 0)
+    stderr(`${result.diagnostics.join('\n')}\n`);
+  return result.outcome === 'clarification-required' ? 2 : 1;
+}
+
+/**
+ * Wires `SIGINT`/`SIGTERM` on `emitter` to abort a fresh controller, returning
+ * its cancellation signal and a disposer that removes the listeners (cli-10).
+ * The `cli.ts` shim passes `process`; tests pass a fake emitter so the
+ * interrupt-to-abort wiring is exercised without real signals.
+ */
+export function interruptSignal(emitter: {
+  once(event: string, listener: () => void): unknown;
+  removeListener(event: string, listener: () => void): unknown;
+}): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController();
+  const onInterrupt = (): void => controller.abort();
+  emitter.once('SIGINT', onInterrupt);
+  emitter.once('SIGTERM', onInterrupt);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      emitter.removeListener('SIGINT', onInterrupt);
+      emitter.removeListener('SIGTERM', onInterrupt);
+    },
+  };
+}
+
+/** True when argv contains any of the given exact flag tokens. */
+function hasFlag(argv: readonly string[], ...flags: string[]): boolean {
+  return argv.some((arg) => flags.includes(arg));
+}

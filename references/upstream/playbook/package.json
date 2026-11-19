@@ -1,0 +1,332 @@
+{
+  "name": "@sublang/playbook",
+  "version": "19.1.0",
+  "type": "module",
+  "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT workflows driven by GEARS specs.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/sublang-ai/playbook#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sublang-ai/playbook.git"
+  },
+  "bugs": "https://github.com/sublang-ai/playbook/issues",
+  "keywords": [
+    "ai",
+    "agent",
+    "playbook",
+    "state-machine",
+    "xstate",
+    "gears",
+    "sdlc",
+    "cligent",
+    "tmux-play"
+  ],
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "files": [
+    "src/runtime.ts",
+    "src/runtime.js",
+    "src/runtime.d.ts",
+    "src/accepted-outcome.ts",
+    "src/accepted-outcome.js",
+    "src/accepted-outcome.d.ts",
+    "src/script-output.ts",
+    "src/script-output.js",
+    "src/script-output.d.ts",
+    "src/xstate-runtime.ts",
+    "src/xstate-runtime.js",
+    "src/xstate-runtime.d.ts",
+    "src/xstate-playbook-runtime.ts",
+    "src/xstate-playbook-runtime.js",
+    "src/xstate-playbook-runtime.d.ts",
+    "slc/link.md",
+    "slc/materialize-link.mjs",
+    "slc/scaffold-fsm.mjs",
+    "slc/experiments/fsm-scaffold-guidance.md",
+    "slc/slc.pin-inputs.json",
+    "slc/workflow-contracts.json",
+    "slc/gears2fsm.md",
+    "slc/text2gears.md",
+    "slc/optimize.md",
+    "slc/prefix.md",
+    "slc/prefix-prompts.mjs",
+    "reference/sdlc/captain.md",
+    "reference/sdlc/code.md",
+    "reference/sdlc/review.md",
+    "reference/sdlc/decide.md",
+    "reference/sdlc/dev.md",
+    "reference/sdlc/branch.md",
+    "reference/sdlc/pr.md",
+    "reference/sdlc/captain.playbook/captain.gears.md",
+    "reference/sdlc/captain.playbook/captain.fsm.ts",
+    "reference/sdlc/captain.playbook/captain.fsm.js",
+    "reference/sdlc/captain.playbook/captain.fsm.d.ts",
+    "reference/sdlc/captain.playbook/captain.playbook.ts",
+    "reference/sdlc/captain.playbook/captain.playbook.js",
+    "reference/sdlc/captain.playbook/captain.playbook.d.ts",
+    "reference/sdlc/code.playbook/code.fsm.ts",
+    "reference/sdlc/code.playbook/code.fsm.js",
+    "reference/sdlc/code.playbook/code.fsm.d.ts",
+    "reference/sdlc/code.playbook/code.fsm.introspect.ts",
+    "reference/sdlc/code.playbook/code.fsm.introspect.js",
+    "reference/sdlc/code.playbook/code.fsm.introspect.d.ts",
+    "reference/sdlc/code.playbook/code.playbook.ts",
+    "reference/sdlc/code.playbook/code.playbook.js",
+    "reference/sdlc/code.playbook/code.playbook.d.ts",
+    "reference/sdlc/code.playbook/code.registry.ts",
+    "reference/sdlc/code.playbook/code.registry.js",
+    "reference/sdlc/code.playbook/code.registry.d.ts",
+    "reference/sdlc/code.playbook/playbook-captain.ts",
+    "reference/sdlc/code.playbook/registered-command.ts",
+    "reference/sdlc/code.playbook/registered-command.js",
+    "reference/sdlc/code.playbook/registered-command.d.ts",
+    "reference/sdlc/code.playbook/playbook-captain.js",
+    "reference/sdlc/code.playbook/ultracode.js",
+    "reference/sdlc/code.playbook/ultracode.d.ts",
+    "reference/sdlc/code.playbook/playbook-captain.d.ts",
+    "reference/sdlc/code.playbook/session-store.js",
+    "reference/sdlc/code.playbook/session-store.d.ts",
+    "reference/sdlc/code.playbook/host-capabilities.js",
+    "reference/sdlc/code.playbook/host-capabilities.d.ts",
+    "reference/sdlc/code.playbook/machine-identity.js",
+    "reference/sdlc/code.playbook/machine-identity.d.ts",
+    "reference/sdlc/code.playbook/seed-config.js",
+    "reference/sdlc/code.playbook/seed-config.d.ts",
+    "reference/sdlc/code.playbook/code.gears.md",
+    "reference/sdlc/code.playbook/playbook.config.template.yaml",
+    "reference/sdlc/code.playbook/bin/playbook.js",
+    "reference/sdlc/code.playbook/bin/add.js",
+    "reference/sdlc/code.playbook/bin/launch-config.js",
+    "reference/sdlc/code.playbook/bin/run.js",
+    "reference/sdlc/code.playbook/bin/interactive-session.js",
+    "reference/sdlc/code.playbook/bin/replay-observer.js",
+    "reference/sdlc/code.playbook/bin/session-store.js",
+    "reference/sdlc/code.playbook/bin/private-paths.js",
+    "reference/sdlc/code.playbook/bin/session-chunks.js",
+    "reference/sdlc/code.playbook/bin/session-replay.js",
+    "reference/sdlc/code.playbook/bin/storage-manifest.js",
+    "reference/sdlc/code.playbook/bin/machine-identity.js",
+    "reference/sdlc/code.playbook/bin/provision.js",
+    "reference/sdlc/code.playbook/bin/adapter-sdk.js",
+    "reference/sdlc/code.playbook/bin/repository-effects.js",
+    "reference/sdlc/review.playbook/review.gears.md",
+    "reference/sdlc/review.playbook/review.fsm.ts",
+    "reference/sdlc/review.playbook/review.fsm.js",
+    "reference/sdlc/review.playbook/review.fsm.d.ts",
+    "reference/sdlc/review.playbook/review.playbook.ts",
+    "reference/sdlc/review.playbook/review.playbook.js",
+    "reference/sdlc/review.playbook/review.playbook.d.ts",
+    "reference/sdlc/review.playbook/review.registry.ts",
+    "reference/sdlc/review.playbook/review.registry.js",
+    "reference/sdlc/review.playbook/review.registry.d.ts",
+    "reference/sdlc/decide.playbook/decide.gears.md",
+    "reference/sdlc/decide.playbook/decide.fsm.ts",
+    "reference/sdlc/decide.playbook/decide.fsm.js",
+    "reference/sdlc/decide.playbook/decide.fsm.d.ts",
+    "reference/sdlc/decide.playbook/decide.playbook.ts",
+    "reference/sdlc/decide.playbook/decide.playbook.js",
+    "reference/sdlc/decide.playbook/decide.playbook.d.ts",
+    "reference/sdlc/decide.playbook/decide.registry.ts",
+    "reference/sdlc/decide.playbook/decide.registry.js",
+    "reference/sdlc/decide.playbook/decide.registry.d.ts",
+    "reference/sdlc/dev.playbook/dev.gears.md",
+    "reference/sdlc/dev.playbook/dev.fsm.ts",
+    "reference/sdlc/dev.playbook/dev.fsm.js",
+    "reference/sdlc/dev.playbook/dev.fsm.d.ts",
+    "reference/sdlc/dev.playbook/dev.playbook.ts",
+    "reference/sdlc/dev.playbook/dev.playbook.js",
+    "reference/sdlc/dev.playbook/dev.playbook.d.ts",
+    "reference/sdlc/dev.playbook/dev.registry.ts",
+    "reference/sdlc/dev.playbook/dev.registry.js",
+    "reference/sdlc/dev.playbook/dev.registry.d.ts",
+    "reference/sdlc/branch.playbook/branch.gears.md",
+    "reference/sdlc/branch.playbook/branch.fsm.ts",
+    "reference/sdlc/branch.playbook/branch.fsm.js",
+    "reference/sdlc/branch.playbook/branch.fsm.d.ts",
+    "reference/sdlc/branch.playbook/branch.playbook.ts",
+    "reference/sdlc/branch.playbook/branch.playbook.js",
+    "reference/sdlc/branch.playbook/branch.playbook.d.ts",
+    "reference/sdlc/branch.playbook/branch.registry.ts",
+    "reference/sdlc/branch.playbook/branch.registry.js",
+    "reference/sdlc/branch.playbook/branch.registry.d.ts",
+    "reference/sdlc/pr.playbook/pr.gears.md",
+    "reference/sdlc/pr.playbook/pr.fsm.ts",
+    "reference/sdlc/pr.playbook/pr.fsm.js",
+    "reference/sdlc/pr.playbook/pr.fsm.d.ts",
+    "reference/sdlc/pr.playbook/pr.playbook.ts",
+    "reference/sdlc/pr.playbook/pr.playbook.js",
+    "reference/sdlc/pr.playbook/pr.playbook.d.ts",
+    "reference/sdlc/pr.playbook/pr.registry.ts",
+    "reference/sdlc/pr.playbook/pr.registry.js",
+    "reference/sdlc/pr.playbook/pr.registry.d.ts",
+    "docs",
+    "reference/sdlc/code.playbook/session-host.js",
+    "reference/sdlc/code.playbook/session-host.d.ts",
+    "reference/sdlc/code.playbook/bin/portable-codec.js",
+    "reference/sdlc/code.playbook/bin/session-host.js",
+    "reference/sdlc/code.playbook/session-assets.js",
+    "reference/sdlc/code.playbook/session-assets.d.ts",
+    "reference/sdlc/code.playbook/bin/session-media.js",
+    "reference/sdlc/code.playbook/asset-types.d.ts",
+    "reference/sdlc/code.playbook/worker-evidence.js",
+    "reference/sdlc/code.playbook/worker-evidence.d.ts",
+    "reference/sdlc/inspect.md",
+    "reference/sdlc/inspect.playbook/inspect.gears.md",
+    "reference/sdlc/inspect.playbook/inspect.fsm.ts",
+    "reference/sdlc/inspect.playbook/inspect.fsm.js",
+    "reference/sdlc/inspect.playbook/inspect.fsm.d.ts",
+    "reference/sdlc/inspect.playbook/inspect.playbook.ts",
+    "reference/sdlc/inspect.playbook/inspect.playbook.js",
+    "reference/sdlc/inspect.playbook/inspect.playbook.d.ts",
+    "reference/sdlc/inspect.playbook/inspect.registry.ts",
+    "reference/sdlc/inspect.playbook/inspect.registry.js",
+    "reference/sdlc/inspect.playbook/inspect.registry.d.ts",
+    "src/artifact-environment.ts",
+    "src/artifact-environment.js",
+    "src/artifact-environment.d.ts",
+    "src/fresh-artifact.ts",
+    "src/fresh-artifact.js",
+    "src/fresh-artifact.d.ts",
+    "src/artifact-files.ts",
+    "src/artifact-files.js",
+    "src/artifact-files.d.ts"
+  ],
+  "bin": {
+    "playbook": "reference/sdlc/code.playbook/bin/playbook.js"
+  },
+  "exports": {
+    "./runtime": {
+      "types": "./src/runtime.d.ts",
+      "default": "./src/runtime.js"
+    },
+    "./xstate-runtime": {
+      "types": "./src/xstate-runtime.d.ts",
+      "default": "./src/xstate-runtime.js"
+    },
+    "./captain/playbook": {
+      "types": "./reference/sdlc/captain.playbook/captain.playbook.d.ts",
+      "default": "./reference/sdlc/captain.playbook/captain.playbook.js"
+    },
+    "./code/playbook": {
+      "types": "./reference/sdlc/code.playbook/code.playbook.d.ts",
+      "default": "./reference/sdlc/code.playbook/code.playbook.js"
+    },
+    "./code/registry": {
+      "types": "./reference/sdlc/code.playbook/code.registry.d.ts",
+      "default": "./reference/sdlc/code.playbook/code.registry.js"
+    },
+    "./playbook-captain": {
+      "types": "./reference/sdlc/code.playbook/playbook-captain.d.ts",
+      "default": "./reference/sdlc/code.playbook/playbook-captain.js"
+    },
+    "./session-store": {
+      "types": "./reference/sdlc/code.playbook/session-store.d.ts",
+      "default": "./reference/sdlc/code.playbook/session-store.js"
+    },
+    "./host-capabilities": {
+      "types": "./reference/sdlc/code.playbook/host-capabilities.d.ts",
+      "default": "./reference/sdlc/code.playbook/host-capabilities.js"
+    },
+    "./machine-identity": {
+      "types": "./reference/sdlc/code.playbook/machine-identity.d.ts",
+      "default": "./reference/sdlc/code.playbook/machine-identity.js"
+    },
+    "./seed-config": {
+      "types": "./reference/sdlc/code.playbook/seed-config.d.ts",
+      "default": "./reference/sdlc/code.playbook/seed-config.js"
+    },
+    "./slc/*": "./slc/*",
+    "./review/playbook": {
+      "types": "./reference/sdlc/review.playbook/review.playbook.d.ts",
+      "default": "./reference/sdlc/review.playbook/review.playbook.js"
+    },
+    "./review/registry": {
+      "types": "./reference/sdlc/review.playbook/review.registry.d.ts",
+      "default": "./reference/sdlc/review.playbook/review.registry.js"
+    },
+    "./decide/playbook": {
+      "types": "./reference/sdlc/decide.playbook/decide.playbook.d.ts",
+      "default": "./reference/sdlc/decide.playbook/decide.playbook.js"
+    },
+    "./decide/registry": {
+      "types": "./reference/sdlc/decide.playbook/decide.registry.d.ts",
+      "default": "./reference/sdlc/decide.playbook/decide.registry.js"
+    },
+    "./dev/playbook": {
+      "types": "./reference/sdlc/dev.playbook/dev.playbook.d.ts",
+      "default": "./reference/sdlc/dev.playbook/dev.playbook.js"
+    },
+    "./dev/registry": {
+      "types": "./reference/sdlc/dev.playbook/dev.registry.d.ts",
+      "default": "./reference/sdlc/dev.playbook/dev.registry.js"
+    },
+    "./branch/playbook": {
+      "types": "./reference/sdlc/branch.playbook/branch.playbook.d.ts",
+      "default": "./reference/sdlc/branch.playbook/branch.playbook.js"
+    },
+    "./branch/registry": {
+      "types": "./reference/sdlc/branch.playbook/branch.registry.d.ts",
+      "default": "./reference/sdlc/branch.playbook/branch.registry.js"
+    },
+    "./pr/playbook": {
+      "types": "./reference/sdlc/pr.playbook/pr.playbook.d.ts",
+      "default": "./reference/sdlc/pr.playbook/pr.playbook.js"
+    },
+    "./pr/registry": {
+      "types": "./reference/sdlc/pr.playbook/pr.registry.d.ts",
+      "default": "./reference/sdlc/pr.playbook/pr.registry.js"
+    },
+    "./session-host": {
+      "types": "./reference/sdlc/code.playbook/session-host.d.ts",
+      "default": "./reference/sdlc/code.playbook/session-host.js"
+    },
+    "./session-assets": {
+      "types": "./reference/sdlc/code.playbook/session-assets.d.ts",
+      "default": "./reference/sdlc/code.playbook/session-assets.js"
+    },
+    "./inspect/playbook": {
+      "types": "./reference/sdlc/inspect.playbook/inspect.playbook.d.ts",
+      "default": "./reference/sdlc/inspect.playbook/inspect.playbook.js"
+    },
+    "./inspect/registry": {
+      "types": "./reference/sdlc/inspect.playbook/inspect.registry.d.ts",
+      "default": "./reference/sdlc/inspect.playbook/inspect.registry.js"
+    },
+    "./artifact-environment": {
+      "types": "./src/artifact-environment.d.ts",
+      "default": "./src/artifact-environment.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "spex lint && vitest run --exclude src/cligent-release-capabilities.test.ts && vitest run src/cligent-release-capabilities.test.ts",
+    "test:acceptance": "node scripts/run-live-acceptance.mjs",
+    "smoke:release": "node scripts/release-smoke.mjs",
+    "check:links": "node scripts/check-links.mjs",
+    "prepush": "bash scripts/prepush.sh",
+    "playbook": "node reference/sdlc/code.playbook/bin/playbook.js"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "@sublang/cligent": "^0.40.0",
+    "@sublang/spex": "^3.0.0",
+    "p-queue": "^9.3.1",
+    "xstate": "^5.19.4",
+    "yaml": "^2.9.0",
+    "@babel/parser": "^7.29.7"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.325",
+    "@openai/codex-sdk": "^0.159.1",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  },
+  "optionalDependencies": {
+    "@openclaw/fs-safe": "0.26.13"
+  }
+}

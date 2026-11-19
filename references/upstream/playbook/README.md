@@ -1,0 +1,145 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
+
+# Playbook: Reliability Is All You Need
+
+[![npm version](https://img.shields.io/npm/v/@sublang/playbook)](https://www.npmjs.com/package/@sublang/playbook)
+[![Node.js](https://img.shields.io/node/v/@sublang/playbook)](https://nodejs.org/)
+[![CI](https://github.com/sublang-ai/playbook/actions/workflows/ci.yml/badge.svg)](https://github.com/sublang-ai/playbook/actions/workflows/ci.yml)
+
+_Skills made reliable through state machines and diverse LLMs._
+
+Natural-language skills are flexible and easy to use, but less predictable than scripted workflows, especially on long-horizon jobs.
+And even the best LLMs make mistakes, partly because plain-language descriptions rarely eliminate vagueness or guarantee completeness.
+
+SubLang Playbook addresses both:
+
+- The companion [SLC compiler](https://github.com/sublang-ai/slc) turns plain-language procedures, such as a `SKILL.md`, into playbooks with deterministic state-machine control flow.
+- A playbook can assign different agents or LLMs to its steps and have them review and challenge one another, helping catch mistakes before delivery.
+
+![Venn diagram: Skill is flexible, Workflow is deterministic, and Playbook sits in the intersection as both.](docs/assets/playbook-venn.svg)
+
+Vocabulary: the **Boss** is you; the **Captain** is the coordinating agent you
+talk to; a **role** is a playbook-local job such as `coder`; and a **player** is
+a stable Captain-session agent and provider conversation to which one or more
+roles bind. Roles describe the workflow, while player IDs decide which work
+shares conversation continuity.
+
+Run `playbook` for an interactive tmux UI powered by [cligent](https://github.com/sublang-ai/cligent), or `playbook run` for the same Captain session without tmux in scripts and CI.
+
+## Quick start
+
+Out of the box, Playbook includes **CODE** for implementation, **REVIEW** for commit-based review and fixes, **DECIDE** for independently proposed and reviewed specification decisions, **DEV** for repository-aware planning of a development request, **BRANCH** for checking out a new branch for a GitHub issue, **PR** for publishing, checking, and merging that branch through a pull request, and **INSPECT** for explaining supplied material or a running interface without changing the repository.
+CODE and DECIDE call REVIEW as a nested playbook; DEV calls CODE, or DECIDE and then CODE, and wraps them in BRANCH and PR when the request names a GitHub issue or asks for a pull request.
+
+The shared starter config selects the Captain's and players' adapter from
+locally visible credentials: Claude first, then Codex, and where both are
+configured only `dev.reviewer` seeds on Codex. If neither is
+configured, it seeds Claude and prints a notice. CODE, REVIEW, DECIDE, BRANCH, and PR bind
+their local roles explicitly to `dev.coder` and `dev.reviewer`, so nested and later
+engagements share a conversation only where their bindings name the same
+player ID; DEV's Analyst binds a distinct `dev.analyst` player and INSPECT's
+Inspector binds `inspect.inspector`.
+
+```sh
+npm install -g @sublang/playbook
+```
+
+Cligent automatically installs the Claude and Codex SDKs with Playbook. Optional backends retain their own runtime setup; see [Configuring agents](docs/configuration.md).
+If an SDK is missing or older than cligent supports, Playbook reports the selected runtime and its repair before launching anything; see [Installing agent SDKs](docs/cli.md#installing-agent-sdks) for upgrades, `npx`, and other adapters.
+
+Prerequisites:
+
+- Node.js >= 20.6.0
+- Credentials for the configured adapter: authenticated [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) or `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` for Claude; authenticated [Codex CLI](https://github.com/openai/codex) or `OPENAI_API_KEY` / `CODEX_ACCESS_TOKEN` for Codex
+- [GitHub CLI](https://cli.github.com/) (`gh`) authenticated for the repository's GitHub remote, for `/branch`, `/pr`, and `/dev` requests that name an issue or ask for a pull request
+
+Interactive `playbook` additionally needs tmux 3.3 or newer and [`glow`](https://github.com/charmbracelet/glow#installation) on `PATH`; headless `playbook run` does not.
+
+CODE works in the current directory and can edit and commit autonomously, so use a clean branch or worktree.
+
+```sh
+cd /path/to/your/project
+playbook
+```
+
+Type a task, enter `/code <task>` for implementation, or enter
+`/decide <question>` for an independently proposed and reviewed decision.
+
+On first launch, Playbook writes its config to `${SPEX_HOME:-$HOME/.spex}/config/playbook.config.yaml`. A config left at either former location — the root's `playbook/playbook.config.yaml` or `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` — is moved there once on the next launch, unless a relative primary locator would change targets; that case is rejected unchanged with absolute replacements.
+
+The same config, compiled Captain, enabled playbooks, stable players, and
+nested calls power headless turns. Both front ends create the same durable
+logical session: copy the reported session ID to reopen an interactive session
+headlessly or a headless session interactively.
+Run REVIEW explicitly, or pipe a longer request to Captain:
+
+```sh
+playbook run "/review review the latest commit"
+printf '%s\n' 'Implement the approved specification, then review it.' | playbook run
+# Later, either presentation can reopen the returned/reported session id:
+playbook --session 4f2c0000-0000-4000-8000-000000009ab1
+playbook run --session 4f2c0000-0000-4000-8000-000000009ab1 "continue"
+```
+
+`playbook run` prints the one Boss-visible Captain reply to stdout and operational status to stderr; CODE and DECIDE can complete their nested REVIEW calls there too.
+
+If a step fails or needs preparation before your answer, ask Captain to fix the prerequisite and resume; see [Preparing a stopped step](docs/cli.md#preparing-a-stopped-step).
+
+Use `/inspect` to analyze existing material or explain a running interface. Browser access requires explicitly enabling the Inspector’s [browser capability](docs/configuration.md#browser-capability). Embedded hosts can submit portable attachments and display saved native figures through the [asset and session APIs](docs/embedding.md#attachments-and-captured-evidence).
+
+See [Using the CLI](docs/cli.md) for flags and durable continuation, [Configuring agents](docs/configuration.md) for the shared lineup, [Embedding](docs/embedding.md) for custom hosts, and the [changelog](https://github.com/sublang-ai/playbook/blob/main/CHANGELOG.md) for releases.
+
+## Create your own playbook
+
+The separate [SLC compiler](https://github.com/sublang-ai/slc) requires Node.js >= 25.5 (Node 26 LTS is recommended) and compiles a plain-language `.md` or `.txt` procedure:
+
+```sh
+npm install -g @sublang/slc
+slc playbook my-workflow.md
+playbook add ./my-workflow.mjs --agent codex --model gpt-6.2-sol
+playbook --list
+playbook run "/my-workflow <your task>"
+```
+
+SLC writes `my-workflow.mjs` as real JavaScript beside the source and prepares one private ESM environment under `my-workflow.playbook/`, with owned Playbook/XState links and a checked `build-manifest.json`. It uses its own compiler tools and selected runtime pair independently of enclosing project settings. Managed loading requires Node >=23.6 and validates current executable identity before import; missing compiler archives alone do not block runtime loading. Historical `.ts` entries retain their legacy loading path. This shared preparation and library lifecycle also supports native Windows; the POSIX interactive host keeps its own platform requirements.
+`playbook add` registers the entry and binds its declared roles in the shared config. The agent and model flags set the new workflow's dedicated Captain and execution roles. Use its slash command with `playbook run` to start the dedicated session. For advanced configuration see [External playbooks](docs/configuration.md#external-playbooks) and the [SLC documentation](https://github.com/sublang-ai/slc#quick-start).
+
+## How it compiles
+
+SLC's `playbook` pipeline has three phases:
+
+1. **text → GEARS** ([slc/text2gears.md](slc/text2gears.md)) — writes a spec package you review: each action with its trigger, actor, prompt, and outcomes, and every other requirement and its tests as items of their own.
+2. **GEARS → FSM** ([slc/gears2fsm.md](slc/gears2fsm.md)) — maps each action item to an XState state that cites it and invokes the Captain, a player, another playbook, or a local script, and realizes the other requirements in its transitions.
+3. **FSM → runtime** ([slc/link.md](slc/link.md)) — links the machine to a host-independent interface for user input, agent calls, status, and telemetry.
+
+The default passes run between the first two phases: the [optimization pass](slc/optimize.md) replaces eligible mechanical steps with local shell scripts, and the [prompt-prefix pass](slc/prefix.md) moves each prompt's relayed runtime values after its instructions so repeated runs share a cacheable prompt prefix; `--no-optimize` skips both.
+Inspect the complete [Captain](reference/sdlc/captain.md), [CODE](reference/sdlc/code.md), [REVIEW](reference/sdlc/review.md), and [DECIDE](reference/sdlc/decide.md) examples.
+
+## Contributing
+
+We welcome contributions of all kinds.
+
+- 🌟 Star our repo if you find Playbook useful.
+- [Open an issue](https://github.com/sublang-ai/playbook/issues) for bugs or feature requests.
+- [Open a PR](https://github.com/sublang-ai/playbook/pulls) for fixes or improvements.
+- Discuss on [Discord](https://discord.gg/XxTPjNqy9g) for support or new ideas.
+
+From source:
+
+```sh
+git clone https://github.com/sublang-ai/playbook.git
+cd playbook
+pnpm install --frozen-lockfile
+pnpm build
+pnpm test
+pnpm playbook   # drive a Boss turn against the source tree
+```
+
+Playbook is itself spec-driven: the compiler phases are specs in [`slc/`](slc), and the reference playbooks are regenerated from their prose sources.
+Edit a source, regenerate its GEARS, FSM, and runtime artifacts, sync the tests and downstream specs until `pnpm test` passes, and commit with co-author trailers per [`specs/packages/git.md`](https://github.com/sublang-ai/playbook/blob/main/specs/packages/git.md).
+The gears↔FSM contract ([the playbook package](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook.md)) and runtime contract ([the playbook-runtime package](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-runtime.md)) are pinned in [`specs/packages/`](https://github.com/sublang-ai/playbook/tree/main/specs/packages) and verified by the test suite.
+
+## License
+
+[Apache-2.0](LICENSE)

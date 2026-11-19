@@ -1,0 +1,414 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
+
+# phase-execution: Phase Execution
+
+## Intent
+
+This package specifies the boundary between generic `slc` mechanics and phase-specific transformation, the generic checks and blocked protocol that guard a phase run, interpreted phase execution by a coding agent, and compiled phase execution through the phase-runner facade with pin-driven strategy selection under [DR-003](../decisions/003-slc-phase-execution.md), [DR-004](../decisions/004-slc-interpreted-phase-execution.md), [DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md), and [DR-007](../decisions/007-slc-phase-artifact-pinning.md).
+The evolving runtime boundary is settled by [DR-010](../decisions/010-playbook-runtime-contract-evolution.md) and its immutable Playbook 1.0 adoption in [DR-011](../decisions/011-playbook-1-0-captain-contract-adoption.md).
+Playbook 10's roleless schema-3 host boundary is current: its contract follows [DR-024](../decisions/024-playbook-10-schema-3-adoption.md), activated by [DR-027](../decisions/027-complete-playbook-10-activation.md).
+Under [DR-028](../decisions/028-contract-based-adoption-without-recompilation.md), that schema-3 generation is selected by the installed engine's declared contract rather than by an exact release, and compiled execution relays the definition text at run time.
+Direct Captain control-call isolation is extended by [DR-012](../decisions/012-playbook-routing-control-separation.md).
+Every agent call turns its runtime's own skill discovery off where the adapter can, under [DR-059](../decisions/059-compiler-calls-turn-native-skills-off.md).
+A text-to-GEARS phase additionally refuses a Source whose role names break the rule of [DR-056](../decisions/056-source-role-names.md) before any agent runs, passes the deterministic Source-fidelity gate of [DR-029](../decisions/029-source-fidelity-gate.md) before any Reviewer judges its output, and a `playbook` link phase the link-fidelity gate of [DR-030](../decisions/030-link-fidelity-gate.md).
+Generic pipeline mechanics are specified in the `pipeline` package.
+Verification uses integration and system acceptance over the execution boundary, interpreted and compiled execution, and pin-driven selection, exercising the `slc` command with faked agent transports and fixture compiled artifacts.
+Essential project-specific references are `slc`, this project's compiler CLI, and Cligent (`@sublang/cligent` [[1]]), the SDK through which `slc` reaches coding agents.
+
+## External Behavior
+
+### Execution boundary
+
+#### phase-execution-1
+
+The slc command shall perform only generic pipeline mechanics, with no phase-specific transformation rules, no phase-specific prompt notes except the required entry-output contract [[self-hosting-18](self-hosting.md#self-hosting-18)], and no phase-specific semantic validators beyond that entry-options gate [[self-hosting-18](self-hosting.md#self-hosting-18)] and the existing artifact-verification gates [[phase-execution-51](#phase-execution-51)], [[phase-execution-53](#phase-execution-53)], [[phase-execution-55](#phase-execution-55)], [[phase-execution-59](#phase-execution-59)], [[phase-execution-60](#phase-execution-60)], [[phase-execution-64](#phase-execution-64)], [[phase-execution-66](#phase-execution-66)] ([DR-003](../decisions/003-slc-phase-execution.md), [DR-044](../decisions/044-artifact-owned-entry-options.md)).
+
+#### phase-execution-2
+
+Where executing an ordinary compile phase, the slc command shall treat the phase definition file as the semantic source of truth; where executing a link phase, the slc command shall treat the pipeline's `link.md` as the semantic source of truth ([DR-003](../decisions/003-slc-phase-execution.md)).
+
+#### phase-execution-3
+
+While executing, the executing phase shall write only its declared target or linked artifact, and shall not modify sources, phase or link definitions, specs, object artifacts, link targets, or unrelated files; scratch space that does not persist past the run is not such a write ([DR-003](../decisions/003-slc-phase-execution.md)).
+
+### Generic checks
+
+#### phase-execution-4
+
+When a phase finishes, the slc command shall verify that the expected target artifact exists and that its extension matches the declared target extension ([DR-003](../decisions/003-slc-phase-execution.md)).
+
+#### phase-execution-5
+
+When a phase finishes, the slc command shall verify that the source, any object inputs, and the link target are unchanged from before the run and that the pipeline chain remains valid ([DR-003](../decisions/003-slc-phase-execution.md)).
+
+#### phase-execution-6
+
+When a write-scope violation is detected by any means, the slc command shall fail it like a failed generic check ([DR-003](../decisions/003-slc-phase-execution.md)).
+
+#### phase-execution-39
+
+When a phase is selected for execution, the slc command shall refuse before invoking its executor unless the declared target is outside exact `.slc` and `.slc-verify` path components, is absent or a single-link regular file, and does not alias the source, objects, link target, definitions, references, prior update input, declared local semantic-input paths from complete closure derivation [[pinning-17](pinning.md#pinning-17)] or incomplete protected-input discovery [[phase-execution-50](#phase-execution-50)], each inside its applicable boundary [[pinning-21](pinning.md#pinning-21)], pin index or local pin-validation input, or an installed verifier-support source the invocation will copy during deterministic completion; for the physical alias decision against each discovered protected input, it shall treat that input as non-aliasing where an existing non-directory or dangling symbolic link proves its prospective location impossible, shall continue to protect that blocking entry by physical identity, and shall refuse execution where any other observation or resolution failure prevents it from establishing non-aliasing; after an `ok` executor result or a source-clarification request [[clarification-4](clarification.md#clarification-4)], it shall reapply the target-safety rule at the physical location accepted before execution, requiring the target to exist only for `ok`.
+
+#### phase-execution-42
+
+Where a full or full-link invocation will write a required deterministic entry, managed environment metadata, build manifest, invocation-evidence, verifier-support, or conformance file after its phases, when the slc command plans the invocation, it shall refuse before invoking an executor unless each such output is absent or a single-link regular file and does not physically alias an invocation input, definition, declared local semantic-input paths from complete closure derivation [[pinning-17](pinning.md#pinning-17)] or incomplete protected-input discovery [[phase-execution-50](#phase-execution-50)], each inside its applicable boundary [[pinning-21](pinning.md#pinning-21)], pin index or local pin-validation input, phase target, or another deterministic output; SLC's own fixed verifier-support files may enter the managed `.slc-verify` directory but shall not alias their installed sources, an entry path that aliases the invocation's raw source shall be omitted with a diagnostic while the bundle compiles, and an unsafe optional introspection, prompt-contract, or coverage-test output shall be omitted through its existing diagnostic-only path.
+
+#### phase-execution-50
+
+Where pin validation permits execution of an unpinned phase but its complete local semantic-input closure [[pinning-17](pinning.md#pinning-17)] cannot be derived within its applicable boundary [[pinning-21](pinning.md#pinning-21)], when the slc command discovers protected inputs, it shall include every independently discoverable member that resolves inside that boundary in the protected-input set.
+
+### Blocked protocol
+
+#### phase-execution-7
+
+Where the unresolved behavior does not produce a source-clarification request [[clarification-1](clarification.md#clarification-1)], when the source, object artifacts, link target, or options are malformed under the applicable definition, or the definition is incompatible with the inputs, the executing phase shall stop and report `BLOCKED` with concrete diagnostics instead of guessing through semantic incompatibility ([DR-003](../decisions/003-slc-phase-execution.md)).
+
+#### phase-execution-8
+
+While following its definition, the executing phase shall resolve only benign ambiguity that does not change domain semantics, and shall report any ambiguity it resolves ([DR-003](../decisions/003-slc-phase-execution.md)).
+
+#### phase-execution-9
+
+When the executing phase reports `BLOCKED` or a generic check fails, the slc command shall stop the pipeline and emit a failure report naming the phase, target path, and reasons ([DR-003](../decisions/003-slc-phase-execution.md)).
+
+### Interpreted execution
+
+#### phase-execution-10
+
+The slc command shall be able to execute any phase by interpreting its definition directly, and interpreted execution shall be available for every phase without requiring compilation, an FSM, or linking ([DR-004](../decisions/004-slc-interpreted-phase-execution.md)).
+
+#### phase-execution-11
+
+When interpreting a phase, the slc command shall prompt a coding agent, reached through Cligent [[1]], with the phase or link definition and the phase inputs, and the agent shall perform the transformation and write the target ([DR-004](../decisions/004-slc-interpreted-phase-execution.md)).
+
+#### phase-execution-12
+
+Where no independent Reviewer is configured, when interpreting a phase, the slc command shall use exactly one initial agent invocation per phase, with at most two corrections only for mechanical findings [[phase-execution-56](#phase-execution-56)]; reviewed execution is governed instead by [[phase-execution-46](#phase-execution-46)] ([DR-004](../decisions/004-slc-interpreted-phase-execution.md), [DR-022](../decisions/022-two-agent-reviewed-compilation.md)).
+
+#### phase-execution-13
+
+Where slc configuration selects an agent CLI and model, the slc command shall apply that selection as configuration and shall not let it change phase semantics ([DR-004](../decisions/004-slc-interpreted-phase-execution.md)).
+
+#### phase-execution-14
+
+When interpreting a phase, the slc command shall establish in the agent prompt a contract that ([DR-004](../decisions/004-slc-interpreted-phase-execution.md)):
+
+- the phase or link definition is authoritative;
+- the agent writes only the requested target or linked artifact;
+- the agent does not edit sources, phase or link definitions, specs, link targets, object artifacts, or unrelated files;
+- the agent does not commit;
+- the agent produces a complete artifact, not a sketch;
+- the agent adds no domain semantics except those the source implies or the definition requires, and drops nothing the source states;
+- the agent preserves verbatim content wherever the definition requires it;
+- the agent verifies the produced artifact against the definition before finishing;
+- the agent requests clarification of unresolved source behavior [[clarification-3](clarification.md#clarification-3)];
+- the agent reports a concise summary and diagnostics, and follows the blocked protocol [[phase-execution-7](#phase-execution-7)].
+
+#### phase-execution-15
+
+When interpreting a phase, the slc command shall permit the agent to invoke the deterministic tools or commands the definition calls for and to read the content the definition cites or references, as part of following the definition, and shall treat that readable closure as the phase's semantic input closure ([DR-004](../decisions/004-slc-interpreted-phase-execution.md)).
+
+#### phase-execution-62
+
+When transporting an agent call, the slc command shall apply this definition-origin context decision without changing definition bytes, configured options, working directory, or existing tool and file permissions ([DR-037](../decisions/037-definition-reference-origin.md)):
+
+| Call | Context |
+| --- | --- |
+| Interpreted work or compiled transformation-performing player or direct Captain | Name the absolute file and containing directory of the executed definition, instructing the agent to resolve its relative references from that directory unless the definition explicitly specifies another base. |
+| Routing Captain or judge | Append no definition-origin context. |
+
+#### phase-execution-46
+
+Where an independent Reviewer is configured, when an agent call has no explicit `allowedTools` property and its Coder returns successful non-`BLOCKED` work without a clarification marker [[clarification-6](clarification.md#clarification-6)], the slc command shall create a fresh Reviewer conversation for that performing call only after its mechanical checks are clean [[phase-execution-56](#phase-execution-56)] whose prompt permits only host-exposed read-only file/search capabilities, warns that shell/network may be unavailable, confines any exposed read-only shell to non-mutating inspection, forbids edits, writes, mutations, and commits, confines inspection to the request's workspace rather than prior or reference artifacts outside it, and guides the Reviewer to treat a twice-evidenced rejection as settled; it shall read the verdict from the end of the Reviewer reply — clean when the last non-blank line is exactly `NO_FINDINGS`, otherwise a findings block running from the last line that is exactly `FINDINGS:` to the end of the reply with consecutive top-level numbered findings and only indented continuation/evidence lines — ignoring narration before the verdict because a Reviewer may preface its verdict with rationale or an adapter may join progress commentary ahead of it, and treating a reply with neither form or a malformed findings block as malformed, relay findings to the Coder for evidenced disposition and minimal root-cause repair, and permit at most three mechanical-or-Reviewer checking rounds, succeeding on `NO_FINDINGS` but failing closed before another correction when the third checking round still reports findings and including those final findings labelled by their actual mechanical or Reviewer origin alongside the latest usable Coder result, without describing the shared rounds as a count of model Reviewer calls; it shall take every successful correction's private envelope from the last complete top-level JSON object in the reply — bare or wholly enclosed by one lone unlabeled or `json` Markdown fence, with narration before that object ignored because an adapter may join an agent's progress commentary ahead of its final message, and with a reply carrying no complete object, another fence label, non-whitespace text after that object, or a second complete object separated from it by whitespace alone rejected — whose `dispositions` consecutively cover every current finding with its number, `accept` or `reject` decision, and nonblank reason and whose string `result` is the complete replacement in the original response format, validate and add those decoded fields to the explicit review transcript with each preceding findings block labelled by its mechanical or Reviewer origin, replace only the Coder result text with decoded `result` before re-review or phase adjudication, and fail closed on a malformed envelope while retaining the preceding usable Coder result; it shall use a role's continuation token only when that role's immediately preceding result supplies one, include prior transcript in later Coder and Reviewer prompts as fallback, preserve the original cwd, models, and cancellation signal, retry a Reviewer call once after a short pause when it returns an error rather than a verdict and that error is not a stall abort [[phase-execution-36](#phase-execution-36)], fail closed with the Reviewer failure text on a repeated Reviewer error, incompletion, or malformed verdict, return Coder error or incompletion without envelope parsing, treat `BLOCKED` only after decoding a successful correction's `result`, and bypass every call carrying explicit `allowedTools` unchanged ([DR-022](../decisions/022-two-agent-reviewed-compilation.md), [[phase-execution-31](#phase-execution-31)]).
+
+### Source-fidelity gate
+
+#### phase-execution-51
+
+Where a compile phase transforms a `text` source into a `gears` target outside the reserved `slc` meta-pipeline [[self-hosting-2](self-hosting.md#self-hosting-2)], when its interpreted [[phase-execution-11](#phase-execution-11)] or compiled [[phase-execution-25](#phase-execution-25)] performing agent returns a result, the slc command shall check the phase's current live target against the source that phase reads for Source fidelity [[verification-25](verification.md#verification-25)] and dispose of the findings ([DR-029](../decisions/029-source-fidelity-gate.md)):
+
+| Case | Required disposition |
+| --- | --- |
+| Findings inside a configured performing-agent loop, before any Reviewer call | Relay them through bounded mechanical repair [[phase-execution-56](#phase-execution-56)]. |
+| No finding | Accept without another agent call when no independent Reviewer is configured, otherwise proceed to its Reviewer call [[phase-execution-56](#phase-execution-56)]. |
+| Findings on a phase result the run would otherwise accept | Fail the phase closed with the findings as its diagnostic [[phase-execution-9](#phase-execution-9)]. |
+
+### Link-fidelity gate
+
+#### phase-execution-53
+
+Where a link phase links exactly one `fsm` object into Playbook's `playbook` linked module [[pipeline-11](pipeline.md#pipeline-11)], when its interpreted [[phase-execution-11](#phase-execution-11)] or compiled [[phase-execution-25](#phase-execution-25)] performing agent returns a result, the slc command shall check that live linked module against that FSM for link fidelity [[verification-27](verification.md#verification-27)] and dispose of the findings, the reserved `slc` meta-pipeline [[self-hosting-2](self-hosting.md#self-hosting-2)] included ([DR-030](../decisions/030-link-fidelity-gate.md)):
+
+| Case | Required disposition |
+| --- | --- |
+| Findings inside a configured performing-agent loop, before any Reviewer call | Relay them through bounded mechanical repair [[phase-execution-56](#phase-execution-56)]. |
+| No finding | Accept without another agent call when no independent Reviewer is configured, otherwise proceed to its Reviewer call [[phase-execution-56](#phase-execution-56)]. |
+| Findings on a link result the run would otherwise accept | Fail the phase closed with the findings as its diagnostic [[phase-execution-9](#phase-execution-9)]. |
+| A linked module the checks cannot import | Dispose of the import diagnostic as a finding, so the Coder receives it rather than the phase failing with an error. |
+
+### Early conformance and mechanical repair
+
+#### phase-execution-55
+
+Where a compile phase transforms a `gears` source into an `fsm` target, when its interpreted or compiled performing agent returns successful work, the slc command shall first require a TypeScript target to pass strict artifact checking [[verification-33](verification.md#verification-33)], then check the live FSM's conformance to that GEARS source [[verification-1](verification.md#verification-1)] and canonical continuation inputs [[verification-35](verification.md#verification-35)] using reconciled artifact-schema evidence [[verification-21](verification.md#verification-21)] from the FSM and the actual full-link target when available, without prior linked artifacts or compiler phase pins, require the exact transition-coverage check [[verification-6](verification.md#verification-6)] under its cooperative lifetime [[verification-49](verification.md#verification-49)] after those checks pass, relay type, schema, conformance, continuation-input, transition-coverage, child-call busy-tag [[verification-45](verification.md#verification-45)], and module-import findings through mechanical repair [[phase-execution-56](#phase-execution-56)], and recheck after generic phase acceptance [[phase-execution-4](#phase-execution-4)], [[phase-execution-5](#phase-execution-5)] before any downstream phase while rechecking protected inputs after every recheck outcome and prioritizing detected mutations [[phase-execution-6](#phase-execution-6)]; an absent target remains the generic target check's responsibility ([DR-033](../decisions/033-early-conformance-and-mechanical-repair.md), [DR-039](../decisions/039-strict-fsm-boundary.md), [DR-040](../decisions/040-early-continuation-input-contract.md)).
+
+#### phase-execution-64
+
+Where a compile phase consumes an `fsm` TypeScript source or a Playbook link consumes one TypeScript FSM object, when execution would begin, the slc command shall require that protected input to pass strict artifact checking [[verification-33](verification.md#verification-33)] before selecting or constructing an executor, reporting any findings as an invalid FSM source and starting no consumer agent ([DR-039](../decisions/039-strict-fsm-boundary.md)).
+
+#### phase-execution-66
+
+Where a compile phase consumes an `fsm` source or a Playbook link consumes exactly one FSM object, when execution would begin, the slc command shall check its canonical continuation inputs [[verification-35](verification.md#verification-35)] using reconciled schema evidence from that FSM and the actual full-link target when available [[verification-21](verification.md#verification-21)], together with its child-call busy-tag contract [[verification-45](verification.md#verification-45)] and, after those checks pass, exact transition coverage [[verification-6](verification.md#verification-6)] under its cooperative lifetime [[verification-49](verification.md#verification-49)] after any strict TypeScript check [[phase-execution-64](#phase-execution-64)], rejecting schema, input-wiring, child-call tag, transition-coverage, or module-import findings before selecting or constructing a consumer executor, without requiring a generation-specific probe for an unclassified direct-Captain artifact, and snapshot the phase's already-protected inputs [[phase-execution-5](#phase-execution-5)] before the preflight imports any artifact, rechecking them after every preflight outcome and prioritizing any changed path over checker findings or exceptions [[phase-execution-6](#phase-execution-6)] ([DR-040](../decisions/040-early-continuation-input-contract.md)).
+
+#### phase-execution-56
+
+Where a configured performing call has no explicit `allowedTools` property and returns successful non-`BLOCKED` work without a clarification marker [[clarification-6](clarification.md#clarification-6)], when its deterministic mechanical check reports findings, the slc command shall relay them to the same Coder as a numbered `FINDINGS:` list through the existing private correction-envelope protocol [[phase-execution-46](#phase-execution-46)], with or without an independent Reviewer, sharing a maximum of three mechanical-or-Reviewer rounds and two Coder corrections, returning the decoded result immediately when mechanically clean and no Reviewer is configured, creating any independent Reviewer only after mechanical checks are clean, failing closed with the surviving findings labelled by their actual mechanical or Reviewer origin after the last checking round, and stopping before another check or agent call on cancellation or a decoded clarification; calls with neither a mechanical check nor a Reviewer and explicit `allowedTools` control calls retain their single unchanged Coder call ([DR-033](../decisions/033-early-conformance-and-mechanical-repair.md)).
+
+### GEARS contract boundary
+
+#### phase-execution-59
+
+Where a compile phase produces the declared `gears` format, including normalization to a GEARS entry format, a format-preserving pass, or the reserved meta-pipeline, when its performing agent returns successful work without a clarification request [[clarification-6](clarification.md#clarification-6)], the slc command shall check the live target's existing GEARS result-contract findings [[verification-29](verification.md#verification-29)], actor-contract findings [[verification-47](verification.md#verification-47)] and package-contract findings [[verification-68](verification.md#verification-68)] together with any applicable Source-fidelity check [[phase-execution-51](#phase-execution-51)], relay findings through bounded same-Coder repair [[phase-execution-56](#phase-execution-56)], and recheck before accepting the target after generic protection checks [[phase-execution-4](#phase-execution-4)], [[phase-execution-5](#phase-execution-5)], leaving an absent target to those generic checks and preserving source obligations under the authoritative phase definition [[phase-execution-14](#phase-execution-14)] ([DR-035](../decisions/035-gears-contract-at-producer.md)).
+
+#### phase-execution-60
+
+Where a compile phase consuming the declared `gears` format is selected for execution, when its existing source has GEARS result-contract findings [[verification-29](verification.md#verification-29)], actor-contract findings [[verification-47](verification.md#verification-47)] or package-contract findings [[verification-68](verification.md#verification-68)], the slc command shall fail before selecting its execution strategy or invoking its executor, report the source path and findings with the failed phase and target [[phase-execution-9](#phase-execution-9)], and preserve that protected source [[phase-execution-3](#phase-execution-3)] without consumer repair calls or a source-clarification outcome ([DR-035](../decisions/035-gears-contract-at-producer.md)).
+
+### Source role-name boundary
+
+#### phase-execution-69
+
+Where a compile phase transforms a `text` source into a `gears` target outside the reserved `slc` meta-pipeline [[self-hosting-2](self-hosting.md#self-hosting-2)], when that phase, or the input normalization preceding it as the pipeline's entry phase, is selected for execution, the slc command shall check the role names of the Source that step reads [[verification-54](verification.md#verification-54)] and, on any finding, fail before selecting its execution strategy or invoking any executor, reporting the Source path and every finding with the failed phase and target [[phase-execution-9](#phase-execution-9)], so no agent call and no later phase runs ([DR-056](../decisions/056-source-role-names.md)).
+
+### Compiled execution
+
+#### phase-execution-23
+
+Where a phase is executed by a compiled `playbook` artifact, the slc command shall drive it host-side through a stable phase-runner facade — construct the `PlaybookRuntime` the artifact's `createPlaybookRuntime` factory builds [[self-hosting-3](self-hosting.md#self-hosting-3)]; for `legacy`, initialize it directly with exactly `callPlayer`, `callJudge`, `emitStatus`, and `emitTelemetry`; for `session-v1`, initialize it with `{ sessionId, playbookId, ports }` carrying a globally unique id, the selected phase id, and exactly those four traced-session ports; for `composed-v2`, initialize it with a causal root `PlaybookSession` whose root id equals its globally unique session id, playbook id names the selected phase, depth is zero, parent identity is absent, and whose exact six ports additionally include `callCaptain` and `callPlaybook`; for `composed-v3`, construct the factory once through the roleless schema-3 phase-host boundary [[phase-execution-49](#phase-execution-49)] and initialize that same causal root with exactly the six composed ports; drive one non-interactive `handleBossInput` turn seeded from the phase input under an abort signal; then dispose it — without inferring or retrying another profile or calling optional adoption or control operations ([DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md), [DR-010](../decisions/010-playbook-runtime-contract-evolution.md), [DR-011](../decisions/011-playbook-1-0-captain-contract-adoption.md), [DR-024](../decisions/024-playbook-10-schema-3-adoption.md)).
+
+#### phase-execution-24
+
+Where a performing-agent clarification has not stopped the turn [[clarification-7](clarification.md#clarification-7)], when the slc command derives a compiled phase's terminal status, the slc command shall require `legacy` and `session-v1` turns to return `void` and map them by output delta plus failed-state telemetry; shall require `composed-v2` and `composed-v3` to return a valid profile-exact structured result made only of plain, accessor-free data with exact outcome-variant fields, literal state status, recursive state value, and finite JSON output, treating hostile accessors or proxies as invalid rather than letting validation throw; shall permit optional string `stateDescription` only on a `composed-v3` terminal result and require a `composed-v3` `unresolved-effect` result to contain exactly `outcome` and `state`; shall map `quiescent` or `terminal` with newly produced declared output to `ok`, `quiescent` or `terminal` without new output and `no-action` to `blocked`, and `failed`, `aborted`, invalid, absent, unexpectedly `suspended`, thrown, or valid `unresolved-effect` results to `error`; shall diagnose an outputless composed-profile `quiescent` or `terminal` result by naming the reached state — its state id, or its state value when the result carries no id, followed by its authored description when the result carries one — and by carrying the final text of the latest successful performing call, a player call or a direct Captain call with no tool restriction [[phase-execution-31](#phase-execution-31)], under the same `latest Coder output: ` label a failed review reports it with [[phase-execution-46](#phase-execution-46)], so an authored terminal that produced nothing still leaves a recoverable reason; shall reject a structured result from either void profile instead of inferring another profile; shall proceed to generic checks on `ok`, treat `blocked` as the `BLOCKED` outcome, and stop like a failed generic check on `error`; and shall report a disposal failure unless a prior turn failure already determines the outcome ([DR-010](../decisions/010-playbook-runtime-contract-evolution.md), [DR-003](../decisions/003-slc-phase-execution.md), [DR-024](../decisions/024-playbook-10-schema-3-adoption.md)).
+
+#### phase-execution-25
+
+Where a compiled phase runs, the slc command shall back the `legacy`, `session-v1`, and `composed-v2` player ports and every profile's Captain and judge ports with coding agents reached through Cligent [[1]] per [DR-004](../decisions/004-slc-interpreted-phase-execution.md), apply per-player model selection as configuration without changing phase semantics, pass each explicit player `resume: false | string` selection and returned resume token unchanged, reject an omitted or invalid selection on `session-v1` and `composed-v2` before invoking the player while preserving legacy omission, make the roleless `composed-v3` player port reject deterministically without invoking an agent transport, accept only the required Captain visibility values and map a direct Captain call to its status, final text, or error without a player id or resume token, carry the host's deterministic mechanical review [[verification-25](verification.md#verification-25)] on a transformation-performing direct Captain call [[phase-execution-34](#phase-execution-34)] so that call's reviewed transport relays its findings in place of a Reviewer call ([DR-029](../decisions/029-source-fidelity-gate.md)) while a routing-only Captain or judge call carries none, serialize Captain and judge calls together through one abort-aware FIFO, provide `callCaptain` and `callPlaybook` only in the composed profiles and settle each nested call with a deterministic unsupported-operation error because the phase host has no child stack, normalize any non-abort `null` or `undefined` rejection from a composed-profile host port to a deterministic `Error` before it reaches the immutable runtime while preserving every other rejection, stream human status and non-trace operational telemetry to the host's configured status sink as it occurs — without duplicating streamed lines into the run's diagnostics — otherwise collect it as drainable diagnostics, and exclude every `playbook.trace` payload from streamed lines and ordinary diagnostics alike ([DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md), [DR-010](../decisions/010-playbook-runtime-contract-evolution.md), [DR-011](../decisions/011-playbook-1-0-captain-contract-adoption.md), [DR-017](../decisions/017-playbook-2-0-thin-runtime-adoption.md), [DR-019](../decisions/019-compile-progress-stall-watchdog.md), [DR-024](../decisions/024-playbook-10-schema-3-adoption.md)).
+
+#### phase-execution-49
+
+Where compiled execution selects the `composed-v3` runtime contract [[phase-execution-30](#phase-execution-30)], when the compiled phase executor constructs its runtime, the executor shall supply the exact roleless schema-3 phase-host construction and reject any use outside it ([DR-024](../decisions/024-playbook-10-schema-3-adoption.md), [DR-028](../decisions/028-contract-based-adoption-without-recompilation.md)):
+
+| Construction member | Required value and behavior |
+| --- | --- |
+| Factory | The linked module's callable default export carries an enumerable, non-writable, non-configurable own `compat` data property whose frozen exact own-data value is `{ artifactSchema: 3, runtimeAbi: 1 }`; a missing, accessor-backed, mutable, or different declaration fails before construction. |
+| Factory argument | One plain accessor-free object with exactly `configuredOptions` and `hostCapabilities`; `configuredOptions` contains no host capability and is exactly `{ definition }`, offered first because every bundle compiled from a definition's compiled-execution section declares that option, or — only when the factory rejects that construction — the exact empty plain object in one further construction, so the factory's own options validation decides which of the two it binds and a current bundle is constructed once; a factory rejecting both fails the phase with both rejections named. |
+| `definition` option | The exact bytes of the definition file the request names, read as UTF-8 text without normalization before the artifact loads — the one configured option a roleless meta-phase artifact may require, and never a member of the seeded Boss turn [[phase-execution-29](#phase-execution-29)]; an unreadable definition fails the phase as an error before the artifact loads. |
+| `hostCapabilities` | One live plain accessor-free object constructed by the installed engine's published fail-closed host-capabilities facade, `@sublang/playbook/host-capabilities` — so the phase host owns no capability implementation — with exactly enumerable own data properties `repository` and `effectLedger`; neither member enters configured options, machine input, context, session snapshots, or diagnostics. |
+| `repository` | An accessor-free plain live object with exactly enumerable own callable data properties `runExclusive` and `runDeferred`, each of which rejects with the facade's same deterministic no-governed-operation error without invoking a supplied operation. |
+| `effectLedger` | An accessor-free plain live object with exactly enumerable own callable data properties `snapshot` and `writeAhead`; synchronous `snapshot()` returns the exact detached plain-data empty-ledger value `{ schemaVersion: 1, revision: 0, boundaries: [], logicalOperations: [] }`, and `writeAhead` rejects with the facade's deterministic no-effect-write error without mutation. |
+| Unsupported construction or capability use | Because the phase host observes only the linked module, it neither loads nor infers a registry-side bespoke declaration: a missing or non-callable default export fails to load, and a callable default export without the required shared-factory compatibility fails compatibility validation; a compatible factory that requires authority, a configured option other than `definition`, or a delegated role, calls a repository operation or ledger write, exposes only the options-only session-Captain wrapper, or otherwise rejects both constructions fails the compiled phase as an error without agent transport, profile inference, a third construction, or initialization retry. |
+
+#### phase-execution-31
+
+Where a `composed-v2` or `composed-v3` phase uses a Captain or judge port, the slc command shall apply these call restrictions ([DR-012](../decisions/012-playbook-routing-control-separation.md), [DR-024](../decisions/024-playbook-10-schema-3-adoption.md), [DR-064](../decisions/064-runtime-owned-model-defaults.md)).
+
+| Case | Required behavior |
+| --- | --- |
+| Direct Captain call | Require own data properties `visibility` equal to `visible` or `hidden` and `resume: false`. An omitted `allowedTools` leaves the performing Captain’s tools available. A supplied `allowedTools` must be an own data property holding an empty array. Reject invalid options before transport. |
+| Hidden judge call | Supply `resume: false` and an empty tool allowlist independently of the visible Captain conversation. |
+| Tool-free control call on any adapter | Omit the child model on the transport request. |
+| Empty tool allowlist at the Cligent boundary | Omit the tool-list option for `codex`, `kimi`, and `opencode`, whose tool restriction relies on the linked artifact’s authored control prompt [[2]]. Send the empty allowlist to every other adapter, including unrecognized adapters [[1]]. |
+| Nonempty allowlist at the Cligent boundary | Forward the list unchanged so unsupported restrictions fail closed. |
+
+#### phase-execution-27
+
+When the slc command runs a phase, the slc command shall select its execution from the pin index: a phase with no pin — including when the pipeline has no pin file [[pinning-1](pinning.md#pinning-1)] or only unrelated stale records — interprets; the host-owned generic normalization step has no pipeline pin key and interprets even when the pipeline contains a same-named pass pin; a current pin [[pinning-2](pinning.md#pinning-2)] whose recorded definition locator identifies the same physical file as the selected phase definition runs the phase's compiled artifact, and fails the run closed when the definitions are physically distinct or it cannot run that artifact rather than interpreting it; a stale pin [[pinning-3](pinning.md#pinning-3)] for the selected phase stops the run with a diagnostic, never silently interpreting that phase; and any malformed pin record or unparseable pin file [[pinning-5](pinning.md#pinning-5)] stops the run before execution ([DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md), [DR-007](../decisions/007-slc-phase-artifact-pinning.md), [DR-026](../decisions/026-slc-owned-pin-input-declarations.md)).
+
+#### phase-execution-30
+
+Where the slc command configures compiled execution from a current pin, when it selects the runtime contract profile, the slc command shall select `legacy` only for absent link-target provenance or exact `@sublang/playbook@0.9.0` provenance, select the final six-port `composed-v2` profile only for exact `@sublang/playbook@0.10.0`, `@sublang/playbook@1.0.0`, `@sublang/playbook@2.0.0`, `@sublang/playbook@3.1.0`, or `@sublang/playbook@4.0.0` provenance, and for every other provenance select the roleless schema-3 `composed-v3` profile exactly when the pin's recorded link-target locator resolves inside an installed `@sublang/playbook` package whose `@sublang/playbook/xstate-runtime` engine declares `RUNTIME_ABI` `1` and `SUPPORTED_ARTIFACT_SCHEMAS` containing `3`, whatever that package's release version, the recorded provenance remaining evidence rather than the selector; it shall otherwise reject before loading the artifact or building an agent transport with a diagnostic naming the resolved package's declaration or its absence — a link target outside such a package, an engine that cannot be resolved or imported, another declared ABI, or a schema set without `3` — and shall neither infer the profile from callable runtime members nor retry a failed initialization under another profile ([DR-010](../decisions/010-playbook-runtime-contract-evolution.md), [DR-011](../decisions/011-playbook-1-0-captain-contract-adoption.md), [DR-017](../decisions/017-playbook-2-0-thin-runtime-adoption.md), [DR-018](../decisions/018-playbook-3-1-adoption.md), [DR-024](../decisions/024-playbook-10-schema-3-adoption.md), [DR-028](../decisions/028-contract-based-adoption-without-recompilation.md)).
+
+#### phase-execution-29
+
+When the slc command seeds a compiled phase's non-interactive turn [[phase-execution-23](#phase-execution-23)], the slc command shall pass one Boss turn whose text states the request kind — compile or link — in prose and carries the full request as a single JSON line introduced by `Request: `, with the request's workspace paths resolved to absolute host paths and no other member — the definition the request names reaches an artifact only as its configured option [[phase-execution-49](#phase-execution-49)], never through the turn a classifier judge reads — so any compiled `playbook` artifact's classifier — or a deterministic consumer — recovers the exact phase input without host-specific parsing ([DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md), [DR-028](../decisions/028-contract-based-adoption-without-recompilation.md)).
+
+#### phase-execution-33
+
+Where a compile execution request carries read-only reference documents — e.g. the entry-phase definition a generic normalization step rewrites toward [[pipeline-34](pipeline.md#pipeline-34)] — the slc command shall present each reference beside the source in the interpreted agent contract and protect it like a definition, failing the run when a reference changed during execution ([DR-003](../decisions/003-slc-phase-execution.md), [DR-013](../decisions/013-normalize-and-pass-phases.md)).
+
+#### phase-execution-34
+
+Where a `composed-v2` or `composed-v3` compiled phase makes a transformation-performing direct Captain call — one whose source-owned options carry no `allowedTools` property [[phase-execution-31](#phase-execution-31)] — the slc command shall append the host workspace contract to the prompt it transports: the request's workspace inputs and artifact-to-write path resolved to absolute host paths [[phase-execution-29](#phase-execution-29)] and the interpreted contract's write-scope rules [[phase-execution-14](#phase-execution-14)], because the linked artifact composes only host-agnostic prompts while the host alone owns workspace specifics; the appended contract shall carry no guard names, result-property schema, or adjudicator instructions, and a routing-only Captain call (explicitly empty `allowedTools`) and every hidden judge call shall cross with their composed prompts unchanged ([DR-005](../decisions/005-slc-self-hosting-meta-pipeline.md), [DR-012](../decisions/012-playbook-routing-control-separation.md), [DR-024](../decisions/024-playbook-10-schema-3-adoption.md)).
+
+### Agent-call watchdog
+
+#### phase-execution-36
+
+Where a positive stall timeout is configured, while any Coder, Reviewer, compiled player, Captain, or judge agent call is in flight, when the Cligent transport observes no agent event for the stall timeout, the slc command shall abort exactly that call through its abort plumbing and report it as a failed call with a diagnostic carrying the inactivity duration, unless the aborted call still yields a successful terminal outcome within the transport's post-abort drain, in which case that outcome stands so a completed call is never reported as a hang; a reported failure shall surface through the unchanged phase protocols as a failure report naming the phase and target, with no automatic transport retry or later review-loop call after the abort, and with fail-closed handling — never an interpreted fallback — for a pinned phase ([DR-019](../decisions/019-compile-progress-stall-watchdog.md), [[phase-execution-9](#phase-execution-9)], [[phase-execution-12](#phase-execution-12)], [[phase-execution-23](#phase-execution-23)], [[phase-execution-27](#phase-execution-27)], [[phase-execution-46](#phase-execution-46)]).
+
+### Native skill isolation
+
+#### phase-execution-71
+
+When transporting any Coder, Reviewer, compiled player, Captain, or judge agent call through Cligent [[1]], the slc command shall decide that call's `nativeSkills` option from Cligent's published native-skill support for the selected adapter [[3]] ([DR-059](../decisions/059-compiler-calls-turn-native-skills-off.md)):
+
+| Selected adapter | `nativeSkills` option |
+| --- | --- |
+| Its support reports `disableSupported: true` — `claude-code`, `codex`, `gemini`, and `opencode` | `false`, so the runtime's own skill discovery is off as far as that adapter's levers reach, leaving only what Cligent's support notes disclose — on Claude Code that includes project and user skills in subagents under an administrator policy tier that does not merge parent settings — while every other call setting is unchanged. |
+| Its support reports `disableSupported: false` — `kimi` — or Cligent publishes none for it | Omitted, so the call keeps that runtime's own skill discovery, a documented reduction rather than an equivalence. |
+
+## Verification
+
+### Interpreted-run acceptance
+
+#### phase-execution-16
+
+Where every phase is interpreted [[phase-execution-10](#phase-execution-10)] and no independent Reviewer is configured, when the slc command runs a full pipeline whose agent writes each declared target [[phase-execution-11](#phase-execution-11)], the slc command shall complete with exactly one agent invocation per mechanically clean phase [[phase-execution-12](#phase-execution-12)], the canonical artifacts present, and any ambiguity the agent reported surfaced in its diagnostics [[phase-execution-8](#phase-execution-8)].
+
+#### phase-execution-17
+
+While interpreting a phase, when the agent finishes without writing the declared target or writes a file whose extension differs from the declared one [[phase-execution-4](#phase-execution-4)], the slc command shall stop the pipeline and emit a failure report naming the phase and target [[phase-execution-9](#phase-execution-9)].
+
+#### phase-execution-18
+
+While interpreting a phase, when the agent modifies the source, an object input, the link target, or a phase or link definition [[phase-execution-3](#phase-execution-3)], the slc command shall fail the run with a report naming the changed path [[phase-execution-5](#phase-execution-5)], [[phase-execution-6](#phase-execution-6)].
+
+#### phase-execution-19
+
+While interpreting a phase, when the agent reports `BLOCKED` for malformed inputs or an incompatible definition [[phase-execution-7](#phase-execution-7)], the slc command shall stop the pipeline and emit a failure report carrying the blocked diagnostics [[phase-execution-9](#phase-execution-9)].
+
+#### phase-execution-20
+
+When the slc command interprets a phase, the agent prompt shall embed the phase or link definition verbatim as authoritative [[phase-execution-2](#phase-execution-2)], establish every clause of the agent contract [[phase-execution-14](#phase-execution-14)] together with permission to run definition-called tools and read cited content [[phase-execution-15](#phase-execution-15)], and add no phase-specific rules of slc's own [[phase-execution-1](#phase-execution-1)].
+
+#### phase-execution-21
+
+Where slc configuration selects an agent and model, when the slc command interprets a phase, the slc command shall pass that selection to the agent transport without it changing the phase definition or the produced artifact [[phase-execution-13](#phase-execution-13)].
+
+#### phase-execution-22
+
+While interpreting a phase, when the agent adds, removes, or renames a phase file so the pipeline chain no longer infers, the slc command shall fail the run with a diagnostic rather than report success [[phase-execution-5](#phase-execution-5)].
+
+#### phase-execution-40
+
+Where a phase target aliases a source, pin index, inline- or sidecar-declared local semantic input — including one independently discovered after another locator makes closure derivation incomplete, or an inline member independently discovered despite a structurally invalid sidecar [[phase-execution-50](#phase-execution-50)] — pinned local artifact or dependency, installed verifier-support source, or other protected input, has multiple hard links, or enters an exact `.slc` or `.slc-verify` component, when the slc command runs the phase, it shall refuse before invoking the executor and leave the protected bytes unchanged [[phase-execution-39](#phase-execution-39)].
+
+#### phase-execution-41
+
+While a phase target is absent or a single-link regular file, when its executor reports `ok`, the slc command shall accept an unchanged existing target or a byte-identical rewrite, but shall fail the phase when the target remains absent [[phase-execution-4](#phase-execution-4)], becomes non-regular, gains another hard link, or changes physical location [[phase-execution-39](#phase-execution-39)].
+
+#### phase-execution-43
+
+Where a required planned playbook entry, verifier-support file, or conformance test physically aliases the source, link target, an inline- or sidecar-declared semantic input, pin index or pinned local input, a phase target, another deterministic output, or an installed verifier-support source, when the user runs the full or full-link invocation, the slc command shall refuse before invoking an executor and shall leave the protected bytes unchanged [[phase-execution-42](#phase-execution-42)].
+
+#### phase-execution-44
+
+Where a raw playbook source physically aliases the deterministic `<basename>.ts` entry path, when the user runs the full-link invocation, the slc command shall compile the bundle, leave the raw source unchanged, omit the entry module, and report that omission as a diagnostic [[phase-execution-42](#phase-execution-42)].
+
+#### phase-execution-45
+
+Where a present pin records an unrelated phase whose local input path is impossible beneath an existing regular file or dangling symbolic link, and the selected unpinned fixture phase targets either an unrelated path or that existing regular-file blocker, when the slc command runs the selected phase, it shall invoke the interpreted executor for the unrelated target [[phase-execution-27](#phase-execution-27)]; for the blocker target, it shall refuse before invoking the executor and leave the blocker's bytes unchanged [[phase-execution-39](#phase-execution-39)].
+
+#### phase-execution-47
+
+Where reviewed execution uses faked Coder and Reviewer transports, when interpreted, configured compiled-player, or transformation-Captain work runs, each Reviewer prompt shall name only host-exposed read-only file/search capabilities, warn that shell/network may be unavailable, forbid mutation and commits, confine inspection to the request's workspace, and guide the Reviewer to settle a twice-evidenced rejection; `NO_FINDINGS` with surrounding whitespace or behind preceding narration shall return the final Coder text, consecutive top-level numbered findings with optional indented evidence — bare or behind preceding narration — shall cause at most two Coder corrections and three shared checking rounds using immediately preceding role tokens when available plus the complete explicit transcript, and findings on the third shared checking round shall fail closed with a diagnostic containing the current mechanical or Reviewer origin, surviving findings and latest usable Coder result, with all-mechanical configured-review flows constructing no Reviewer and mixed rounds retaining their actual findings origin in the transcript; a valid private correction envelope — bare, lone-unlabeled-fence, or lone-`json`-fence, each also behind joined narration, including one whose `result` carries braces and escapes inside JSON strings — shall expose accepted and rejected dispositions only to the Reviewer and preserve the decoded original-format result exactly for phase adjudication, while prose after the object, two adjacent trailing objects, another fence label, multiple fences, an unindented Reviewer epilogue, or a missing, duplicate, wrongly numbered, malformed, or objectless successful correction shall fail closed with the preceding usable Coder result; explicit `allowedTools` control calls shall bypass review, initial Coder failure or `BLOCKED` and correction error or incompletion shall stop without review, an encoded correction `result` carrying `BLOCKED` shall preserve the blocked protocol, a non-stall Reviewer error followed by a well-formed verdict shall continue as if the error had not occurred, a stalled Reviewer call shall not be retried, a repeated Reviewer error, incompletion, malformed verdict, or thrown error shall fail closed with its diagnostic, cancellation and cwd/model selection shall cross every call unchanged, and separate performing calls shall use separate Reviewer conversations; whereas an incremental Reuse invocation supplied a reviewed executor shall invoke neither Coder nor Reviewer [[phase-execution-46](#phase-execution-46)].
+
+#### phase-execution-48
+
+Where a normalization fixture supplies the entry-phase definition as a read-only reference, when the slc command interprets the generic normalization step, the slc command shall present that reference beside the source in the agent prompt and protect it like a definition, so a fixture mutation of the reference fails the run with a diagnostic naming the changed path [[phase-execution-33](#phase-execution-33)].
+
+#### phase-execution-52
+
+Where a fixture `text2gears` phase compiles a Source authoring one fragment and its executor writes a live target, when the phase runs, a target that drops the fragment shall reach the Coder of a reviewed interpreted loop and of a reviewed compiled performing Captain call alike as a numbered `FINDINGS:` correction without any Reviewer call, a conservant correction shall then reach the Reviewer and succeed on `NO_FINDINGS`, findings still present when the third permitted call comes due shall fail closed carrying them, a run without a configured correction transport whose target has findings shall fail that phase with the findings as its diagnostic, and neither a conservant target — one compiled from a Chinese Source that marks its relays `` （`>`） `` among them — nor the same phase run under the reserved `slc` meta-pipeline shall report a finding [[phase-execution-51](#phase-execution-51)].
+
+#### phase-execution-54
+
+Where a fixture `playbook` link phase links one FSM object and its executor writes a live linked module, when the link runs, a module whose composer resolves its player-facing identity from a canonical local role other than its state's shall reach the Coder of a reviewed loop as a numbered `FINDINGS:` correction without any Reviewer call, a conformant correction shall then reach the Reviewer and succeed on `NO_FINDINGS`, an unreviewed run whose module has findings shall fail that link with the findings as its diagnostic, and a conformant module shall report no finding [[phase-execution-53](#phase-execution-53)].
+
+### Compiled-run acceptance
+
+#### phase-execution-26
+
+Where phases are backed by `legacy`, `session-v1`, `composed-v2`, and roleless `composed-v3` fixture `playbook` artifacts driven only through the runtime boundary [[phase-execution-23](#phase-execution-23)], when the executor runs them, each runnable fixture shall receive one Boss turn whose prose names its request kind and whose single `Request: ` JSON line reproduces the full absolute-path request and no other member [[phase-execution-29](#phase-execution-29)]; `legacy` shall receive only four direct ports, `session-v1` shall receive its unique minimal session with exactly four ports, `composed-v2` shall receive its unique causal root session with exactly six ports, and a strict `composed-v3` fixture declaring no option shall observe the exact immutable schema-3/runtime-ABI-1 factory compatibility, shall reject the offered `{ definition }` and then observe the exact empty configured-options object in one further construction, and shall observe the exact plain two-member host-capability object, a plain repository exposing only rejecting `runExclusive` and `runDeferred`, and an effect ledger whose snapshot synchronously returns the exact detached empty-ledger value and whose writer rejects, without any capability entering machine input, snapshots, or diagnostics [[phase-execution-49](#phase-execution-49)]; a `composed-v3` fixture whose options validator declares `definition` shall receive, in its single construction, exactly `{ definition }` holding the compile or link definition's exact bytes — CRLF and non-ASCII text included — which it echoes into its target or linked artifact, an unreadable definition shall map to `error` before the artifact loads, and a profile taking no configured options shall run without reading the definition [[phase-execution-49](#phase-execution-49)]; a linked module lacking the required compatible shared-factory default export, a non-plain or extra capability record, an options-only session-Captain fixture, a fixture requiring authority, another option, or roles, and a fixture calling a repository operation, effect write, or player port shall fail before construction or transport as applicable — a rejecting factory observing exactly the `definition` and then the empty construction — and without initialization retry [[phase-execution-25](#phase-execution-25)], [[phase-execution-49](#phase-execution-49)]; the same runnable fixtures shall succeed inside and outside a Git worktree; `exportSnapshot`, `restore`, and `retainedGenerationMetadata` shall remain unobserved and optional `adopt`, `describe`, `apply`, and `unresolvedEffectEnvelopes` operations shall remain uncalled during the one turn and disposal [[phase-execution-23](#phase-execution-23)]; the two void profiles shall retain output-delta and failed-telemetry mapping and reject structured results, both composed profiles shall require their exact structured result, output-producing `quiescent` or `terminal` shall map to `ok`, outputless `quiescent` or `terminal` and `no-action` shall map to `blocked`, an outputless terminal reached after a performing call returned text shall be diagnosed with that state's id, its authored description when present, and that text under the `latest Coder output: ` label, only a `composed-v3` terminal result may carry string `stateDescription`, and absent, cross-profile, accessor- or proxy-backed, non-JSON, malformed-state, `failed`, `aborted`, unexpectedly `suspended`, thrown, exact `{ outcome: 'unresolved-effect', state }`, or otherwise-successful but disposal-failing runs shall map to `error` [[phase-execution-24](#phase-execution-24)]; explicit false or token player resume selection and returned tokens shall cross the older-profile Cligent adapter unchanged, `session-v1` and `composed-v2` shall reject omitted or invalid selections before invoking the player, and `legacy` shall preserve omission; a direct Captain call shall cross without player identity or resume state and shall preserve its required visibility, status, final text, and error; concurrent Captain and judge calls shall be single-flight in one queue; nested calls shall fail deterministically; a non-abort nullish composed-profile host-port rejection shall surface as a thrown control-plane error rather than an authored `failed` result; and exact `playbook.trace` prompts, replies, errors, and resume tokens shall not occur in the returned diagnostics [[phase-execution-25](#phase-execution-25)].
+
+#### phase-execution-28
+
+When the slc command runs a fixture phase, a phase with no pin file or absent from a present pin file — including one with an unrelated stale record — shall interpret; a host-owned normalization step shall interpret while a same-named current pipeline pass pin selects compiled execution only for that pass; a current pin whose external definition is a physically distinct byte-identical file from the pipeline-selected definition shall fail closed without selecting either executor whether execution or incremental Reuse would otherwise be selected, while a current pin whose in-boundary definition locator is a symbolic link to the selected definition shall remain eligible for compiled selection; a current pin with absent or exact `@sublang/playbook@0.9.0` link-target provenance shall select the `legacy` compiled executor without interpreting, a current pin with exact `@sublang/playbook@0.10.0`, `@sublang/playbook@1.0.0`, `@sublang/playbook@2.0.0`, `@sublang/playbook@3.1.0`, or `@sublang/playbook@4.0.0` provenance shall select the six-port `composed-v2` executor without consulting its link target, a current pin with any other provenance — exact `@sublang/playbook@10.0.0`, a later `@sublang/playbook@12.0.0`, and an unreviewed `@sublang/playbook@9.0.0` alike — whose link target lies inside a fixture-installed `@sublang/playbook` package declaring `RUNTIME_ABI` `1` and `SUPPORTED_ARTIFACT_SCHEMAS` containing `3` shall select the roleless schema-3 `composed-v3` executor, and a current pin whose other provenance names a link target outside such a package — including `@sublang/playbook@1.3.0`, `@sublang/playbook@3.0.0`, and `@sublang/playbook@5.0.0` through `@sublang/playbook@9.0.0` beside a plain link target — or inside one whose engine cannot be resolved, declares another ABI, declares no schema `3`, or declares nothing, or a compiled artifact the selected host cannot run, shall fail closed naming the declaration or its absence without profile inference or initialization retry [[phase-execution-30](#phase-execution-30)], and a stale pin for the selected phase, any malformed pin record including for an unselected phase, or an unparseable pin file shall fail the run with a diagnostic and not interpret [[phase-execution-27](#phase-execution-27)].
+
+#### phase-execution-32
+
+Where a `composed-v2` or `composed-v3` fixture configures a child model, the integration suite shall verify the compiled host’s Captain and judge call restrictions [[phase-execution-31](#phase-execution-31)].
+
+| Case | Required observation |
+| --- | --- |
+| Performing Captain followed by a visible or hidden tool-free Captain and a hidden judge | The adapter receives the child model on the performing call. Both control calls start fresh conversations with `resume: false` and omit the child model. |
+| Tool-free control calls under `claude-code` and `codex` | The Claude adapter receives an empty allowlist. The Codex adapter receives no tool-list option, with every other call setting identical. |
+| Nonempty allowlist sent to the Codex transport | The Codex adapter receives that list unchanged. |
+| Direct Captain option missing, inherited, accessor-backed or invalid | The host rejects the call before transport. |
+
+#### phase-execution-37
+
+Where a compiled fixture runtime emits status and operational telemetry mid-turn and the executor is configured with a status sink, when the executor runs the phase, each non-trace status line shall reach the sink before the run settles and shall not repeat in the returned diagnostics, exact `playbook.trace` payloads shall reach neither the sink nor the diagnostics, and the same fixture without a sink shall retain the drainable-diagnostics behavior [[phase-execution-25](#phase-execution-25)].
+
+#### phase-execution-38
+
+Where a faked Coder or Reviewer transport yields an initial event and then stalls under a short configured stall timeout, when the call runs through the phase transport or review wrapper, the slc command shall abort the stalled call once the timeout elapses, preserve a failure diagnostic carrying the inactivity duration, and make no automatic retry of that call [[phase-execution-36](#phase-execution-36)], [[phase-execution-12](#phase-execution-12)]; whereas where the aborted transport still yields a successful terminal event within the post-abort drain, the slc command shall report that success rather than a stall [[phase-execution-36](#phase-execution-36)].
+
+#### phase-execution-35
+
+Where a pinned `composed-v2` meta-phase artifact is driven through the compiled executor over a fake agent transport that captures transported prompts, when the seeded compile or link turn reaches the artifact's transformation-performing direct Captain call, the transported prompt shall carry the artifact's composed GEARS-derived body plus the host workspace contract naming the request's absolute workspace inputs and the absolute artifact-to-write path, and a captain that writes exactly that artifact shall map the run to `ok`; whereas a routing-only Captain call carrying an explicitly empty `allowedTools` and every hidden judge call shall receive its composed prompt unchanged [[phase-execution-34](#phase-execution-34)].
+
+#### phase-execution-57
+
+Where fixture compilation produces a GEARS prompt containing a runtime placeholder, when its FSM interpolates that placeholder prematurely or fails to import, the integration suite shall verify that the real conformance gate rejects it before downstream linking, rechecks a repaired FSM through a fresh module load, and reconciles schema evidence from the actual target rather than compiler pins or stale linked artifacts [[phase-execution-55](#phase-execution-55)].
+
+#### phase-execution-58
+
+Where configured interpreted and compiled performing calls use fixture transports without an independent Reviewer, when deterministic findings require correction, the integration suite shall verify successful same-Coder recovery, one call for a clean artifact, at most two repairs for recurring findings, private-envelope validation, and stopping on cancellation or decoded clarification [[phase-execution-56](#phase-execution-56)], together with protected-input rejection after a correction [[phase-execution-5](#phase-execution-5)]; an independently configured Reviewer shall be constructed only after the mechanical findings clear [[phase-execution-56](#phase-execution-56)].
+
+#### phase-execution-61
+
+Where fixture compilation produces or consumes GEARS, when the runner executes the boundary cases, the integration suite shall verify that ordinary producers and format-preserving passes repair malformed result metadata and malformed actor clauses while preserving the source's loop obligation and authored prompt, reject persistent findings and malformed normalization output before downstream work, accept roleless and reserved-pipeline valid syntax, and retain Source-fidelity findings and immediate clarification stopping [[phase-execution-59](#phase-execution-59)], while malformed supplied GEARS fails before executor selection with zero executor calls and unchanged input [[phase-execution-60](#phase-execution-60)].
+
+### Definition reference origin acceptance
+
+#### phase-execution-63
+
+Where a fixture definition outside the compilation workspace cites a sibling file, when the real interpreted and compiled execution boundaries transport compile and link work, the integration suite shall verify that performing agents can locate and read the sibling through the supplied absolute definition origin, preserve the definition bytes and existing configured options, and leave routing Captain and judge prompts unchanged [[phase-execution-62](#phase-execution-62)].
+
+### Strict FSM boundary acceptance
+
+#### phase-execution-65
+
+Where real TypeScript FSM fixtures enter producer or consumer execution, when the integration suite runs the compiler, the suite shall verify rejection of a loadable but type-invalid FSM before downstream work [[phase-execution-55](#phase-execution-55)], zero consumer executor selections for an invalid supplied FSM [[phase-execution-64](#phase-execution-64)], bounded same-Coder repair followed by acceptance and stopping on cancellation [[phase-execution-56](#phase-execution-56)], and rejection of protected-input edits during repair [[phase-execution-5](#phase-execution-5)].
+
+### Continuation input boundary acceptance
+
+#### phase-execution-67
+
+Where fixture FSMs use canonical or privately nested-only Boss-continuation input wiring or inherited child-call busy tags, when the integration suite runs producer and consumer paths, the suite shall verify bounded same-Coder repair before downstream work [[phase-execution-55](#phase-execution-55)], rejection of supplied invalid FSMs before executor construction, acceptance of unclassified direct-Captain artifacts, and rejection of import-time mutations to a source, object, definition, link target, or declared semantic input ahead of clean, finding, and throwing preflight outcomes [[phase-execution-66](#phase-execution-66)], stopping on cancellation or clarification [[phase-execution-56](#phase-execution-56)], and preservation of protected input bytes during ordinary repair [[phase-execution-5](#phase-execution-5)].
+
+### Early coverage boundary acceptance
+
+#### phase-execution-68
+
+Where real XState fixtures expose reachable, shadowed or unsupported transitions, when the integration suite compiles or consumes them, the suite shall verify exact coverage findings before downstream execution, bounded same-Coder repair, clean one-call production and the custom-executor recheck [[phase-execution-55](#phase-execution-55)], supplied-FSM refusal before consumer construction with protected-input changes taking precedence over clean, finding and interrupted outcomes [[phase-execution-66](#phase-execution-66)], and cancellation or deadline failure without a Source clarification or an extra repair budget [[phase-execution-56](#phase-execution-56)].
+
+### Source role-name boundary acceptance
+
+#### phase-execution-70
+
+Where the two-word-role fixture is the Source of a `text`-to-`gears` pipeline, when the slc command compiles it as an entry-form Source and, through normalization, as a raw Source, the suite shall verify that each run fails at its first step naming the Source path and the role-name finding, invokes no executor, and writes no target, while the same run with the role written as one word reaches the executor [[phase-execution-69](#phase-execution-69)].
+
+### Native skill isolation acceptance
+
+#### phase-execution-72
+
+Where an interpreted phase and a `composed-v2` compiled fixture phase run through the configured executor factories with a configured Reviewer over faked adapters, when the slc command transports their Coder, Reviewer, compiled player, routing Captain, and judge calls under a `claude-code`, `codex`, `gemini`, or `opencode` selection, every call shall reach its adapter with `nativeSkills: false`; whereas the same transport given a `kimi` adapter or an adapter Cligent publishes no support for shall reach it with no `nativeSkills` option and every other call setting identical to a `codex` call's [[phase-execution-71](#phase-execution-71)].
+
+## References
+
+[1]: https://www.npmjs.com/package/@sublang/cligent "Cligent: Unified TypeScript SDK for AI Coding Agent CLIs"
+[2]: https://github.com/sublang-ai/playbook/blob/main/specs/decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement "Playbook DR-013 Addendum A1: prompt-level isolation for adapters without tool enforcement"
+[3]: https://github.com/sublang-ai/cligent/blob/v0.35.0/specs/packages/skills.md#skills-11 "Cligent skills-11: native-skill support per adapter"

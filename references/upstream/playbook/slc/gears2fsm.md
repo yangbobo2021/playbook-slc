@@ -1,0 +1,1019 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
+
+# GEARS-to-Finite-State-Machine Transformation
+
+## Compiler-owned checking environment
+
+When SLC supplies a verification operation, use that exact operation after writing the target.
+SLC owns TypeScript, Node ambient declarations, fixed checking flags, selected Playbook/XState roots, and final acceptance.
+Do not infer a project/global `tsc` command, create a project manifest, or install project dependencies for checking.
+An unavailable alternative checker or an Agent's `BLOCKED` summary does not override the supplied compiler gate.
+Report exhausted bounded search as unverified, separately from an established code defect or environment failure.
+For source-permitted inputs that generic probing cannot infer, export JSON-only `coverageWitnesses` with schema `sublang.slc.coverage-witnesses.v1` and `entries` of `{ input?: <public startup options>, events: [<public events>] }`.
+Witnesses start at the actual initial state and cannot patch private context, jump states, or weaken guards.
+
+Second phase of a playbook (a state-machine agent orchestrating other agents).
+Transforms normative GEARS spec items into an XState v5 finite state machine.
+
+- Source: the spec package of GEARS items produced by the first phase.
+- Target: an XState v5 machine object artifact [[1]].
+
+Target is an object artifact only: it defines the machine, actor contracts, and typed inputs, but shall not bind a runner or supply concrete runtime implementations.
+
+## Formats
+
+| Role   | Format | Extension |
+| ------ | ------ | --------- |
+| source | gears  | .md       |
+| target | fsm    | .ts       |
+
+## Setup
+
+The artifact shall use XState v5's `setup(...)` then `.createMachine(...)` [[10]].
+The artifact shall restrict itself to erasable TypeScript syntax — type annotations that strip cleanly, no constructor parameter properties, `enum`s, or namespaces — so a host running under type stripping loads it directly.
+It shall also pass the repository's strict `noUnusedLocals` and
+`noUnusedParameters` checks. Helper signatures and XState callbacks shall omit
+values they do not read; for example, a fresh-context helper that uses only
+`bossIntent` shall not also accept an unused `context`, and an assign callback
+that reads only `event` shall destructure only `event`.
+The `types` block shall declare only `context`, `events`, machine `input`, and
+machine `output`. XState v5's `SetupTypes` has no `actors` property; emitting
+`types: { actors: ... }` is invalid and prevents registered action and actor
+names from type-checking.
+Declare a distinct typed actor contract in `setup(...)`'s top-level `actors`
+map for every actor kind the GEARS artifact uses, using typed actor logic such
+as `fromPromise<Output, Input>(...)` [[11]]:
+
+- `captain` for direct work performed by Captain;
+- `player` for work Captain delegates to a named role;
+- `playbook` for a nested playbook call; and
+- `script` for a deterministic shell script an
+  [optimizer-introduced script item](text2gears.md#script-behaviors-optimizer-introduced)
+  runs without any agent.
+
+Do not declare, register, export, or import an actor kind the GEARS artifact
+does not use. A playbook with direct Captain work and nested calls but no
+delegated player therefore has `captain` and `playbook` contracts only.
+
+XState may expose output from heterogeneous invoked actors as `unknown` in
+shared guards and actions. Generated helpers shall accept an unknown event and
+narrow its `output` or `error` structurally to the declared actor contract
+before reading fields; they shall not rely on unchecked `event.output`
+inference. Helpers that construct transition arrays shall preserve guard,
+action, and target literals with `as const`, `satisfies`, or typed action/guard
+functions rather than widening registered names to plain `string`.
+
+The artifact shall not bind or construct a runner or bake in concrete actor
+implementations. A named stateless public boundary validator is permitted;
+importing it shall not construct a runtime, bind host capabilities, or call ports.
+Each actor placeholder shall fail explicitly (for example,
+throw `'captain actor must be provided by the runner'`).
+Where the Source artifact begins with an SPDX comment block, the generated
+artifact shall preserve its license and copyright text before the imports
+using valid TypeScript line comments. It shall never copy Markdown HTML
+comment delimiters into a TypeScript target.
+
+`CaptainInput` shall be a typed object with at least:
+
+- `stateId`: the stable id of the invoking working leaf;
+- `sourceItem`: the GEARS item ID this state realizes;
+- `prompt`: the source item's full final prompt, verbatim;
+- `result`: a record whose keys are the valid guard names this invocation may
+  return.
+
+`PlayerInput` shall be a typed object with at least:
+
+- `stateId`: the stable id of the invoking working leaf;
+- `role`: the canonical lowercase local id derived from the [role](text2gears.md#roles) Captain is to delegate;
+- `sourceItem`: the GEARS item ID this state realizes;
+- `prompt`: the source item's full final prompt, verbatim;
+- `result`: a record whose keys are the valid guard names this invocation may return.
+
+`ScriptInput` shall be a typed object with at least:
+
+- `stateId`: the stable id of the invoking working leaf;
+- `sourceItem`: the GEARS item ID this state realizes;
+- `command`: the script item's blockquote text, verbatim after Markdown
+  unescaping, with every runtime-value placeholder it carries bound from typed
+  machine context — a script has no prose contract to carry the field
+  separately, and the provided actor executes `command` verbatim.
+  A bound value is data, never syntax: the placeholder occupies a
+  single-quoted shell word, and binding replaces that whole word — quotes
+  included — with the value encoded as its own single-quoted literal, each
+  embedded `'` written `'\''`. Interpolating a value into double-quoted or
+  unquoted command text is malformed, because a retained value is reported
+  text that would otherwise expand or run as shell syntax;
+- `result`: a record whose keys are the item's two declared guard names, first
+  the zero-exit guard, then the nonzero-exit guard.
+
+`ScriptOutput` shall be a discriminated union with one literal `guard` member
+per declared result key and a required `exitStatus: number` property.
+The script contract carries no prose output: downstream prompts shall not
+depend on text a script produces.
+
+`CaptainOutput` and `PlayerOutput` shall each be a discriminated union with one
+literal `guard` member per authored result key and every payload field required
+by that result as a required property. A catch-all `guard: string` interface
+with optional look-alike fields is not a discriminated contract and is
+malformed.
+The artifact shall export the machine input plus every Captain, player, and
+playbook actor input/output type that the linker must provide. The linked
+module imports those exact types; it shall not redeclare near-duplicates that
+can drift in optional fields, dynamic-call metadata, question ids, or child
+result shapes.
+Any recursive JSON value type in the artifact shall exactly preserve the
+shared boundary's readonly variance:
+
+```typescript
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue };
+```
+
+Nested-playbook output, completed-result evidence, plans, context, and machine
+output shall use that readonly type rather than a mutable array/record
+near-duplicate. The linker shall not cast or copy around a variance mismatch.
+
+Except for a Source-declared local-role prompt-identity placeholder, every
+runtime-value placeholder established by Source in a direct-Captain or
+delegated-player prompt shall be backed by a typed ordinary actor-input field
+populated from typed machine context, so the linker can substitute it with the
+exact runtime value. Angle-bracketed metavariables quoted inside domain
+instructions (for example the literal `<model>` in a commit-message format)
+remain ordinary prompt text and are not runtime-value placeholders. For the
+generic Captain forms, wire `<boss-intent>` from `bossIntent`,
+`<enabled-playbooks>` from `enabledPlaybooks`, `<remaining-plan>` from
+`remainingPlan`, and `<completed-call-results>` from
+`completedCallResults`. Other non-identity placeholders shall retain the
+semantic typed field established by Source (for example `<#>` from
+`irNumber`); a created-commit or labelled-section placeholder binds as
+[Context and prompts](#context-and-prompts) states. Leaving an ordinary
+runtime-value placeholder literal, replacing it with an empty default because
+its field was omitted, or making the linker recover it from untyped context is
+malformed.
+The corresponding `invoke.input` object shall include that field beside `prompt`; storing it only in machine context does not satisfy the actor-input contract.
+When Source declares a placeholder as the current identity of a local acting
+role, preserve the placeholder literal in the FSM prompt and do not add any
+identity-value field to machine input, runtime options, machine context, or
+actor input, required or optional. The linker shall resolve the placeholder at
+prompt-composition time by calling the invocation-scoped
+`promptIdentity(roleId)` lookup for the declared local role identified by Source.
+The sole blockquote placeholder of a dynamic nested-playbook item is instead
+the child `textContext` field specified in §Nested playbook calls.
+
+The generic Captain's `enabledPlaybooks` field shall be an immutable array of
+exact entries `{ id: string, command: string, intent: string }`, not an array
+of ids or an open record. Its dynamic-call guard checks `entry.id`, while the
+linked runtime validates, snapshots, and deterministically renders all three
+fields.
+
+Guard names shall be specified and interpreted **per state**, not as a global union.
+A global union encourages name reuse with divergent semantics and couples unrelated states.
+Shared helpers may accept `string`, but each state's `invoke.input.result` is the authoritative local contract.
+For an acting GEARS item, the compiler shall derive that contract only from
+the ordered bullets under the item's out-of-blockquote `Results:` label.
+Every declared guard name shall match `[A-Za-z_$][A-Za-z0-9_$]*`.
+It shall preserve every guard name, order, and description verbatim, reject a
+missing, duplicate, blank, or malformed declaration, and shall not infer a
+result contract from acting-prompt prose or transition implementation.
+
+An acting item that declares no `Results:` label has exactly one outcome
+(text2gears emits result contracts only for behaviors with more than one
+outcome, or whose output a later item consumes).
+The compiler shall give such a state the **default single-outcome contract**:
+one result `done` with the fixed description
+`The acting agent completed the behavior.`, plus the universal
+`needsBossReply` below.
+A single-outcome item may instead carry exactly one authored `Results:`
+bullet when a later prompt consumes its output; the compiler derives the
+one-guard contract from that bullet as usual.
+The `done` transition is self-driving per §Transitions: it targets the next
+workflow obligation, or a `final` state when the item is the last one.
+The default never applies to an item carrying a `Results:` label, and it does
+not license inferring any richer contract from prose.
+The item's blockquote alone becomes `invoke.input.prompt`; the `Results:`
+label and bullets shall never enter that prompt.
+A `>` that remains at the start of a prompt line after removing the outer GEARS blockquote marker is literal quoted-context content and shall remain in `invoke.input.prompt` unchanged.
+Each result description shall name every additional output field its accepting
+guard requires, using the exact case-sensitive property names. For example, a
+delegation or continuing-call description whose guard reads the planned child
+call shall say that output includes `remainingPlan`, `nextPlaybookId`, and
+`nextPlaybookInput`; a direct or final response shall name `response`; and an
+authored question shall name `question`. A vague description such as
+"selected the next call" is malformed when its guard also requires structured
+fields. Deterministic verification synthesizes valid actor output from this
+local result contract and shall not infer hidden guard payloads from guard
+source text.
+
+For the default generic Captain decide-call-observe pattern, the local guard
+discriminants are a stable compiler contract, not names the compiler may
+invent:
+
+- initial routing uses `question` with required `question` and `delegation`
+  with required `remainingPlan`, `nextPlaybookId`, and
+  `nextPlaybookInput`; it has no direct or terminal result;
+- post-child reassessment uses `final` with required `response`,
+  `followUpQuestion` with required `question`, and `continuing` with required
+  `remainingPlan`, `nextPlaybookId`, and `nextPlaybookInput`.
+
+Both direct-Captain states additionally receive the universal
+`needsBossReply` result. Their guards and actions shall use those exact
+case-sensitive names so the compiled adjudication contract remains stable.
+
+For a controller playbook — one whose Source declares DR-029's session-scoped
+controller policy: a session Captain that runs for the whole host session,
+receives every Boss turn, and operates the working playbooks from outside the
+engagement stack (DR-029) — the compiler shall apply the additive
+controller decision-state class below. The class joins the stable compiler
+contract beside the decide-call-observe vocabulary above; that vocabulary and
+the universal `needsBossReply` rule stay untouched for the artifacts that
+consume them.
+The controller machine shall be a session loop, not a finite errand: a
+quiescent conversational hub (tag `playbook.parked`) receives each Boss turn;
+the controller decision state decides it over the closed action set; a
+`respond` selection settles its turn in the decision call itself, its
+validated `text` being the turn's captain speech; an acting selection's host
+settlement becomes the outcome report grounding one closing-reply call; and
+the machine returns to the hub for the next turn. Returning to the hub after
+a settled turn completes the session loop's turn; it is not the idle-hub
+routing that [Transitions](#transitions) reserves for recovery.
+Because the hub receives every Boss turn, a controller state carries no
+Boss-reply suspension: the compiler shall not add `needsBossReply` to a
+controller machine's `invoke.input.result` maps — a clarifying question to
+Boss is a `respond` selection.
+The machine shall declare no terminal result output and shall keep exactly
+one reachable `type: 'final'` shutdown state entered only by the host's
+teardown event. The completion rule of
+[Errors and termination](#errors-and-termination) applies unamended: its
+output clause binds only where Source declares a terminal result, which a
+controller Source does not.
+The controller decision state's direct-Captain result contract discriminates
+the closed action set of DR-029 as extended by DR-038 and DR-069. Its guard discriminants
+are a stable compiler contract, not names the compiler may invent — `respond`, `resume`,
+`start`, `switch`, `dismiss`, `deliver`, and `runtime`, plus `recover` when Source declares recovery preparation — with each guard's
+required payload fields:
+
+- `respond` requires `text`;
+- `resume` requires `playbookId` and carries no `input`;
+- `start` and `switch` each require `playbookId` and `input`;
+- `runtime` requires `actionId`;
+- `recover`, when declared, requires no payload and selects host-owned preparation followed by runtime-validated continuation;
+- `dismiss` and `deliver` require none — a `deliver` result in particular
+  carries no text payload: the host is authoritative for the delivered text,
+  so the contract declares no field for it.
+
+The decision state's guards and actions shall use those exact case-sensitive
+names so the compiled controller contract remains stable.
+
+## States
+
+Each state shall declare:
+
+- a stable `id` (for `#id` targeting and Boss interrupts);
+- an intuitive state key (the property name under `states: { ... }`);
+- a one-line `description` (for inspector tools and documentation);
+- JSON-safe `meta: { playbook: { stateId, description, role? } }` naming the
+  state's public playbook identity per the identity rule below and repeating
+  its description so linked runtimes can discover active public
+  identities through `snapshot.getMeta()` without private XState nodes. A
+  delegated-role state shall also carry the canonical lowercase source role id in
+  `meta.playbook.role`; every other state shall omit `role`;
+- if it invokes the direct `captain` actor: `invoke.input` carrying
+  `sourceItem`, `prompt`, and `result` (per [Setup](#setup));
+- if it invokes the delegated `player` actor: `invoke.input` additionally
+  carrying the same source-derived `role` as `meta.playbook.role`;
+- if it invokes the `script` actor: `invoke.input` carrying `stateId`,
+  `sourceItem`, `command`, and `result` (per [Setup](#setup)) — no `prompt`
+  and no `role`.
+
+The source item ID shall live in `invoke.input.sourceItem`, not in a comment — this keeps the GEARS-to-state mapping machine-readable.
+
+Public `meta.playbook` state metadata belongs only to nodes declared under `states`; the machine root shall omit `meta.playbook`, while its XState `id`, description, and metadata outside that namespace remain unrestricted.
+Outside a parallel group's regions, a state's `meta.playbook.stateId` shall equal its state key — the one identity a factory-backed linked runtime indexes by.
+A delegated state's `invoke.input.role` shall match the canonical lowercase id of its source item's named role.
+A direct Captain state shall not invent a `Captain` role binding.
+
+Every direct-Captain, delegated-player, or script working leaf — sequential
+or parallel — shall carry the tag `playbook.busy`: the shared quiescence
+helper derives busyness strictly from active-state tags, so an untagged
+Captain, player, or script leaf reads as quiescent while its call is still in
+flight.
+
+The machine's initial state shall be a quiescent idle hub (no `invoke`) — typically `ready` — that accepts the Boss entry events and carries the `playbook.parked` tag because it can return control to Boss.
+Captain- and player-invoking work begins only on a Boss-originated event, so
+constructing and starting the machine performs no agent call.
+
+Each direct Captain or delegated player actor returns a discriminated result
+with `guard` set to one of `input.result`'s keys [[4]].
+Guards [[5]] on `onDone` transitions inspect `event.output.guard` to route.
+
+Delegated-player example:
+
+```typescript
+invoke: {
+    src: 'player',
+    input: ({ context }): PlayerInput => ({
+        stateId: '<stable-state-id>',
+        role: 'reviewer',
+        sourceItem: '<ITEM-A>',
+        prompt: [
+            'Flag any issues or improvements (numbered; no duplication).',
+            "Think thoroughly — don't just approve or reject.",
+        ].join('\n'),
+        result: {
+            hasFindings: 'Reviewer raised issues or suggestions.',
+            noFindings: 'Reviewer has no findings.',
+        },
+    }),
+    onDone: [...],
+    onError: { target: 'failed', actions: 'rememberCaptainError' },
+}
+```
+
+For an item in which Captain acts directly, the corresponding invocation uses
+`src: 'captain'` and a `CaptainInput` with the same static mapping fields but no
+`role` field.
+
+## Mapping
+
+Source is a spec package of three item kinds ([text2gears "Target package"](text2gears.md#target-package)); Target implements it and cites it, and Source never names a part of Target.
+Each Source action item — an item whose statement carries a `Captain shall` acting clause — shall map to exactly one state in Target.
+A state's `invoke.input` shall carry what its actor kind takes from the item: a `captain` or `player` state the item's prompt verbatim as `prompt` and a `script` state the item's command as `command` ([Setup](#setup)), and a `playbook` state the call's target as `playbookId` and its input as `text` ([Nested playbook calls](#nested-playbook-calls)).
+Every state that invokes an actor shall cite its item in `invoke.input.sourceItem`, with the ID as Source writes it; the `PlaybookInput` type alone leaves that field optional, so a `playbook` state without it stays valid.
+A requirement item shall map to no state: the compiler shall realize it in the transitions, guards, context, final states, and outputs of the states that implement the actions it cites or governs.
+A test item shall map to nothing and add no behavior: the compiler shall emit no state, transition, or guard for it, and shall treat a behavior that only a test item mentions as absent from Source.
+The `## Intent` sentences state no requirement.
+
+An item written as direct Captain work shall map to exactly one `captain` invocation.
+An item that prompts or relays to a named role shall map to exactly one `player` invocation.
+A nested-call item shall map to exactly one `playbook` invocation.
+A script item (`Captain shall run:`) shall map to
+exactly one `script` invocation whose `input.command` carries the blockquote
+with its runtime-value placeholders substituted, and whose `result` preserves
+the item's two guards in declared order.
+Where the substituted value is absent, the compiled input shall keep the
+placeholder literal rather than an empty default, so the command compares
+against text no output can equal and the step refuses instead of acting on an
+unbound target.
+The compiler shall not infer one actor kind from a
+runtime player name or encode Captain as a player.
+A script state is not agent-invoking: the compiler shall not add
+`needsBossReply` to a script state's result map and shall not register it with
+`resumableStates(ids)`.
+A script state's success guard shall target the next workflow step and its
+failure guard shall route to `failed` unless the source items define a
+different recovery.
+
+Per text2gears [composition](text2gears.md#composition), each action item already carries the full final prompt for one behavior, with no duplicate lines.
+The FSM compiler shall not concatenate prompts across items, re-compose them, or silently dedupe.
+An action item that still contains duplicate prompt lines is malformed; the compiler shall reject or flag it rather than silently propagate the duplication into `invoke.input.prompt`.
+
+## Parallel groups
+
+Items carrying the same `Parallel group: <id>` metadata shall compile into one
+compound state with `type: 'parallel'` and one region per item [[12]].
+Each member shall be a delegated-player item; a direct-Captain or nested-call
+member is malformed because those actor kinds share one Captain control lane or one
+pending-child slot. Each region shall contain a delegated-player working leaf
+and a local final state; the working leaf retains the item's stable state id,
+`sourceItem`, role, prompt, and result contract.
+The members' canonical role ids shall be pairwise distinct; a repeated role in one group is malformed.
+The parallel parent shall use `onDone` as the join, which XState takes only
+after every region reaches final.
+
+The artifact shall export `concurrentRoleSets` as a deeply readonly array containing one role-id array per parallel group in first-item source order, with each inner array following that group's item order.
+An artifact with no parallel group shall export an empty array.
+
+Each branch shall assign only its own staged result.
+The join shall promote all staged results atomically before later work begins,
+so branch completion order cannot change downstream inputs.
+Transitions between sibling regions are forbidden.
+
+Working leaves shall carry tag `playbook.busy`.
+A branch that supports Boss-reply suspension shall use a local waiting leaf
+tagged `playbook.parked` rather than exit the parallel parent; `BOSS_REPLY`
+shall identify and reenter only the waiting branch.
+If several branch questions are pending, the event shall carry a stable
+question id and the classifier shall not guess among them.
+A fresh entry event or root interrupt may exit the complete parallel parent and
+shall clear its staged results and branch questions.
+Treat a fixed parallel parent as one jumpable unit. Generate a stable id and
+root `BOSS_INTERRUPT` target for the parallel parent, not for any working leaf
+inside its regions. Branch working ids remain valid internal resume targets for
+their branch-local `BOSS_REPLY`; they shall not appear in the interrupt target
+union or classifier catalog. This prevents a nominal one-branch jump from
+implicitly entering or restarting the parallel parent's other regions.
+An invoke error shall exit to the root failure state, allowing XState to stop
+the sibling invocations automatically.
+
+## Nested playbook calls
+
+The independently packaged [workflow contracts](workflow-contracts.json) describe
+only the public outputs of builtin dependencies from `@sublang/playbook`.
+This pipeline adopts the catalog's `literalTargetBindings` as its default
+nested-target namespace. An explicit Source or supplied compiler-dependency
+binding overrides a default and requires the replacement's own public interface.
+Runtime hosts shall honor the compiled dependency bindings as external ABIs.
+When the call target is bound to one of those packaged builtins, read its exact
+output interface before compiling a Source-authored acceptance or relay
+predicate; do not infer field names from the desired meaning or inspect the
+callee implementation. A local basename or a custom target reusing an id does
+not establish that dependency binding.
+The shared bridge correlates the invocation and its supplied input scope;
+the builtin REVIEW result attests to that scope with `noUnsettledFindings: true`
+and `evaluatedRevision`. Do not invent `reviewedCommit` or require the final
+evaluated revision to equal the caller's earlier commit, since REVIEW may make
+its own fixes. Retain every Source-authored predicate on the declared fields.
+If an output-dependent call needs an external interface that is unavailable or
+inconsistent with the declared dependency, report `BLOCKED` with that missing
+compiler input rather than inventing fields or asking the source author to
+repair sufficient domain behavior. Missing or contradictory authored behavior
+still requires the host's source-clarification protocol.
+
+An item whose behavior is a literal or dynamic
+`Captain shall call playbook ...:` shall compile to a state that invokes a
+typed `playbook` actor, not the `captain` or `player` actor.
+What follows the child's success, abort, or failure is stated by the requirement items that cite the call item; the compiler shall route `invoke.onDone` and `invoke.onError` from them.
+The setup types shall declare `PlaybookInput` with stable `stateId`, target
+`playbookId`, composed `text`, and optional `sourceItem`. The playbook actor's
+successful output is the child's JSON-safe machine output itself (or
+`undefined`), not a second wrapper carrying a synthetic status or `output`
+field. `invoke.onDone` shall therefore record `event.output` as the successful
+child output. Aborted and error call results reject the actor and reach
+`invoke.onError`.
+The artifact shall supply a failing placeholder for `playbook`, just as it does
+for `captain` and `player`; the linked runtime provides the actor
+implementation.
+
+A literal call shall retain the existing representation: `playbookId` is the
+literal target and `text` is the composed GEARS blockquote.
+Composing that text follows the quoted-relay rules of [link](link.md): a
+relayed value that is empty contributes no line, a multi-line value is quoted
+line by line, and the composer inserts no empty quoted line of its own.
+
+A dynamic call written
+``Captain shall call playbook selected by `<target-field>`:`` shall declare the
+named target field and the blockquote's text field as typed string fields in
+FSM context. The dynamic `PlaybookInput` variant shall require string-valued
+`playbookIdContext` and `textContext` metadata fields. Its `invoke.input` shall
+read the runtime values from those exact context fields and shall also carry
+the following static metadata:
+
+```typescript
+{
+  stateId: '<stable-state-id>',
+  sourceItem: '<ITEM-A>',
+  playbookId: context.nextPlaybookId,
+  text: context.nextPlaybookInput,
+  playbookIdContext: 'nextPlaybookId',
+  textContext: 'nextPlaybookInput',
+}
+```
+
+`playbookIdContext` and `textContext` name context fields; they never contain
+runtime target or text values. The compiler shall emit them as explicit string
+literals so conformance tools can verify context wiring without evaluating or
+parsing the `invoke.input` function's source. The evaluated `playbookId` and
+`text` shall each be strings and shall come from the context field named by its
+corresponding metadata property. Literal calls need not carry these dynamic
+metadata properties and retain their existing behavior.
+
+The call state shall carry tag `playbook.suspended`.
+The call state and every ancestor state, including the machine root, shall omit
+tag `playbook.busy`.
+An independently active sibling Captain, player, or script leaf may carry
+`playbook.busy`.
+The call state shall route `invoke.onDone` from child output and
+`invoke.onError` from child failure.
+The child call shall remain state-scoped: leaving the call state stops the
+invoked actor and aborts the host call through XState's invocation signal
+[[2]].
+The FSM shall not allocate runtime call ids, construct child sessions, retain
+runtime promises, or route Boss text to the child.
+
+When Source explicitly continues one downstream behavior after a child
+success, abort, or failure, both `invoke.onDone` and `invoke.onError` shall
+record the corresponding JSON-safe child result and target that downstream
+behavior. The generic `failed` state is the default only when Source declares
+no recovery or reassessment path for a rejected child.
+That recovering `onError` shall be an ordered transition array. Its first arm
+shall use a typed structural guard that accepts only an `Error` carrying a
+validated public child `result` that is either `status: 'aborted' | 'error'`
+or `status: 'ok'` with `terminal.kind === 'failure'` — a child that completed
+at its own authored failure terminal, which the bridge delivers through this
+same error path; only that arm appends sanitized child evidence and
+continues. A fallback arm shall retain
+the control error normalized as JSON-safe `{ name, message, stack? }` in
+`lastError` and route to `failed` without appending a completed child result;
+the linked runtime alone retains the original error in its out-of-machine
+latch. Non-abort port rejection, malformed port data, JSON, identity, bridge,
+and other control-plane errors are not authored child outcomes even though
+XState delivers both kinds through `invoke.onError`.
+Where the rejected error structurally carries the runtime's normalized child
+result, the error action shall inspect whether its status was `aborted` or
+`error`; it shall not collapse both into an invented success/failure enum. The
+FSM may inspect that public structural data without importing the runner or
+constructing runtime call identities.
+`onDone` proves successful bridge delivery without a declared child failure;
+it does not establish every caller-owned domain condition. The caller shall
+enforce its own explicit Source-authored acceptance or relay predicates on
+the delivered output before continuing, without inventing predicates from
+callee implementation details or overriding the child's compiled terminal
+kind with output fields.
+For a workflow that reassesses child results, use a typed JSON-safe record such
+as `{ playbookId, status: 'ok', output }` on `onDone` and
+`{ playbookId, status: 'aborted' | 'error', error }` on `onError`, with a
+rejected `status: 'ok'` failure terminal recorded in that same `ok` shape so
+the child's own output is relayed. Because the
+runtime rejection is an `Error` with a public `result` property, normalization
+shall inspect `result.status` and `result.error` before applying a generic
+`Error` normalizer. It shall persist only the current context target id, the
+status, and a compact `{ name, message }` error; it shall never persist the
+whole runtime result, child session id, child state, call identity, or stack.
+An abort without an error gets a compact generic abort description. The current
+target id remains available in typed context until the sanitized record has
+been created. On success, persist only `event.output`, which is the actual child
+machine output returned by the bridge, not a runtime call-result envelope.
+When that optional output is absent, omit the `output` property from the
+completed-result record rather than storing `undefined`.
+Recognize authored rejected child results with the existing named
+`validatePlaybookCallResult` export from `@sublang/playbook/xstate-runtime`
+and the type-only `PlaybookCallResult` from `@sublang/playbook/runtime`:
+
+```typescript
+import { validatePlaybookCallResult } from '@sublang/playbook/xstate-runtime';
+import type { PlaybookCallResult } from '@sublang/playbook/runtime';
+
+export function authoredChildResult(error: unknown, expectedPlaybookId: string): PlaybookCallResult | undefined {
+  if (!(error instanceof Error)) return undefined;
+  try {
+    const result = validatePlaybookCallResult(
+      (error as Error & { result?: unknown }).result,
+      expectedPlaybookId,
+    );
+    return result.status !== 'ok' || result.terminal?.kind === 'failure' ? result : undefined;
+  } catch {
+    return undefined;
+  }
+}
+```
+
+Pass the actual selected target id from the same source-owned target used by
+`invoke.input`; do not fabricate a request or child-session identity for this
+check. The shared bridge owns invocation correlation. Its existing validator
+owns the complete [public result union](link.md#playbookports-contract),
+including terminal/state shapes, optional abort error, and JSON validity;
+do not rewrite those structural checks or redeclare their public types.
+An invalid result returns no authored outcome and takes the existing
+control-error fallback. A validated successful child output still needs its
+separate Source-owned acceptance predicate on `onDone`.
+After preserving Source-authored success acceptance and recovery cases plus the
+public control-error `onError` fallback, omit an `onDone` transition whose guard
+cannot be reached from any legal predecessor/context after the prior ordered
+`onDone` arms.
+This rule does not require arbitrary finite enumeration, drop valid failure
+behavior, or relax verifier obligations.
+Validate the full public result before projecting only the permitted compact
+evidence; evidence minimization shall not narrow the accepted public union.
+The helper supplies no workflow route, child-domain predicate, runner or actor
+implementation. Its ordinary package import is an explicit artifact dependency.
+
+Before entering a dynamic call, the machine shall reject an empty target and
+empty input text, any target equal to `selfPlaybookId`, and any target that
+Source requires to belong to an input catalog but that catalog does not
+contain. Rejection shall occur before invoking the `playbook` actor; the host
+remains responsible for its independent registry validation.
+Where Source forbids repeating an equivalent completed or failed call without
+new information, the machine shall also keep a private deterministic history
+of target-and-input signatures and reject a continuation whose target and
+complete input exactly match a prior call. Encode each signature as the
+collision-free `JSON.stringify([playbookId, text])` tuple of exact JavaScript
+strings, not delimiter concatenation, and append it before invocation so
+success, abort, and authored failure all count. That history shall not be
+included in a Captain or player prompt; a revised input containing new
+information is a different call. The exact machine check is a safety floor;
+the acting Captain remains responsible for Source's broader semantic
+equivalence policy.
+That validation belongs on the guarded transition into the call state. The
+call state's `invoke.input` mapper shall be a pure read of the already-validated
+typed context fields; it shall not call an assertion helper or throw while
+XState resolves actor input. This keeps state restoration, inspection, and
+scripted coverage from crashing outside the invocation's `onError` boundary.
+For the default Captain decide-call-observe loop, the delegation and
+continuing `onDone` arms shall transition directly into the invoking call
+state. Each arm's single guard validates its applicable actor-output and
+context constraints: both validate JSON shape, catalog membership,
+self-target, and duplicate history, while strict plan shrink applies only to
+`continuing`. Its actions store the selected target/input and append the
+signature before state entry. Do not interpose an eventless preparation or
+validation state between the Captain actor and the call state: it obscures the
+authored Captain entry edge from deterministic coverage and adds no XState
+safety beyond the guarded direct transition.
+
+## Context and prompts
+
+Context fields used to drive guards or compose prompts shall be **typed and named**.
+Where Source owns array-valued retained discussion whose initial state is no history, initialize that context field to `[]` and reset it to `[]` only at its Source lifecycle boundaries.
+Carry its declared array shape through ordinary and continuation `invoke.input`; do not leave the empty structural history absent so a prompt-contract probe mistakes it for a scalar.
+This empty history is not a default caller intent, prerequisite report, domain evidence, approval, or prior-stage result; those remain unavailable until actually established.
+The compiler shall not branch on untyped properties of `lastResult`; persistent routing decisions belong in typed context fields. (`lastResult` is for inspection only.)
+Where Source declares a finite ordered plan, represent it as a typed readonly
+JSON-safe array and validate that shape on the actor-output transition; an
+unconstrained `JsonValue` does not establish that a plan is ordered or finite.
+Where a decide-call-observe loop carries the calls after the selected next call
+as `remainingPlan`, its continuing-call guard shall additionally require the
+new plan to be strictly shorter than the current plan. The Captain may revise
+or remove remaining entries as evidence arrives, but it cannot grow or retain
+the same-length plan indefinitely; the initial finite array therefore bounds
+the number of sequential child calls without an arbitrary runtime call limit.
+
+A placeholder that reads the commit an earlier call created — `<code-commit>`,
+`<decide-commit>` — binds to a typed context field named by its canonical
+mapping, assigned from that call's accepted `latestCommit`, the effect-owned
+property the runtime fills from the repository receipt
+([text2gears](text2gears.md#result-contracts)); the actor input carries the
+field beside the prompt like any other relayed value.
+A placeholder the GEARS defines as a labelled section of another relayed
+text binds to a typed context field named by its canonical mapping. The
+definition names the label that opens the section and the labels that end it —
+`<original-intent>` as the `Original intent:` section of the caller's request,
+which runs to the `Review scope:` line or to the end of the request. The
+machine derives the field deterministically in the entry action or transition
+that stores the text and again in every action that replaces it, such as a
+fresh entry directive or an interrupt that restarts with new text:
+
+- the text as read is the text itself, except that where every non-blank line
+  begins with `>`, each line is read without that marker and one optional space
+  after it, the literal quote layer a quoted relay adds;
+- the section is the lines of the text as read from the first line that
+  begins with the opening label, the label removed, through the line before the
+  first later line that begins with an ending label, or through the last line,
+  with the result trimmed; a line that merely looks labelled, such as `Note:`
+  or `Constraints:`, stays in the section;
+- where no line begins with the opening label, or the section is empty once
+  trimmed — its label directly followed by an ending label or by the end of
+  the text — the field is the whole text as read, trimmed, so the request is
+  never lost.
+
+The derived field is ordinary context that actor inputs relay, never a player
+or judge output.
+
+Prompts shall pass only the **specific extracted fields** the player needs.
+The compiler shall not dump `JSON.stringify(lastResult)` or any opaque blob: it leaks internal `guard` strings, wastes tokens, and confuses the LLM.
+
+Player bindings and prompt identities shall enter only through `PlaybookSession.roleBindings` at runtime call, prompt, and trace boundaries.
+The artifact shall not bake them into machine input, options, or context; model names and other host settings shall remain host policy rather than persisted FSM state.
+Host-owned configuration such as an enabled-playbook catalog shall remain
+immutable machine input/context for the session. Boss events and actor outputs
+shall not carry, replace, append to, or otherwise overwrite that catalog.
+A non-identity placeholder whose value Source assigns to the host — for
+example the `<definition>` a phase host supplies to a compiled phase — is such
+host-owned configuration: a required machine `input` field carried into typed
+context and the acting actor's input, never a Boss-event or actor-output
+payload. A Source-declared local-role prompt-identity placeholder is the
+explicit exception; it resolves from the invocation-scoped `promptIdentity`
+lookup and is not persisted as host configuration.
+Every machine with a dynamic call shall receive its own registered or authored
+playbook id as immutable machine input/context named `selfPlaybookId`, and its
+dynamic-call guard shall reject that target. The leaf-level `stateId` name is
+reserved for actor invocation identity and shall not be reused for a playbook
+id.
+JSON-safe context and output records shall omit absent optional members instead
+of creating own properties whose value is `undefined`.
+JSON validation shall accept only null, booleans, finite numbers, strings,
+arrays, and plain own enumerable data-property objects. It shall reject cycles,
+non-plain instances (`Error`, `Date`, `Map`, and class instances), accessors,
+symbol keys, sparse/undefined values, `NaN`, and infinities rather than silently
+changing them during serialization.
+An accepted array shall have prototype exactly `Array.prototype`, no holes,
+symbols, accessors, or extra own string properties, and enumerable own data
+descriptors for every canonical index; its standard non-enumerable `length`
+descriptor is the sole exception. That data descriptor shall be
+non-configurable and carry the exact array length, but its `writable` flag may
+be either `true` on an ordinary array or `false` after the shared runtime
+recursively freezes a validated boundary value. `Reflect.ownKeys(array)` shall
+contain exactly `length + 1` keys: the `length` property and every canonical
+index from `0` through `length - 1`. A digit string whose numeric value is not
+less than `length` is an extra property, not an array index. An accepted record
+shall have prototype exactly `Object.prototype` or `null`, and every key returned by
+`Reflect.ownKeys` shall be a string whose own descriptor is enumerable and a
+data descriptor. Cycle detection shall track only the active recursion path
+and remove a container on unwind, so a shared acyclic array or record is valid
+while an actual back-edge is rejected.
+
+## Transitions
+
+A transition fires on an event — typically `onDone` (actor completed) [[4]].
+When multiple are possible, a synchronous guard [[5]] picks the path.
+Transitions shall persist relevant typed fields from `event.output` to context via `assign` [[6]] so downstream prompts can read them.
+Where a Source outcome's availability condition is deterministically knowable from execution state, such as a prior Boss reply already received by the machine, the transition shall enforce that condition with authored guards or typed state before the result can be accepted; stating the condition only in a Results description, Judge prose, or prompt text is not enough.
+The compiler shall update or reset those source-owned facts only at their actual Source lifecycle boundaries, and shall not attempt to mechanically decide semantic judgments that Source leaves to the acting agent.
+Transitions shall be self-driving when source items define the next obligation: an action item's `When` clause names the outcome it follows, and requirement items state bounds, completion, and what follows a nested call's return.
+Routing to an idle hub is for recovery, unrecoverable Boss input, or one-shot entry events — not the happy path.
+
+Where an artifact-schema-3 delegated-player state's outcomes are governed by the
+linked runtime ([link.md "Captain adjudication"](link.md#captain-adjudication)),
+every accepted `onDone` arm — each arm that routes a declared outcome, not the
+malformed-output fallback — shall carry, first among its actions, the
+root-machine action
+`{ type: 'playbook.acceptedOutcome', params: { source: '<stateId>', target: '<target stateId>', acceptedOutcome: '<guard>' } }`,
+with the setup's `actions` declaring `'playbook.acceptedOutcome'` as a no-op
+that types those three string params.
+`target` names the state the next public snapshot shows for the arm: the arm's
+own target, or the parallel parent's `onDone` target where the arm's target is a
+region's final leaf that completes that parent, because the machine leaves that
+leaf before the snapshot; an arm that completes the join only when every
+sibling region is already final therefore splits into two arms guarded on that
+condition, each naming the state it reaches.
+The linked runtime retains the marker until the next public snapshot confirms
+`source` in the prior snapshot and `target` in the new one, and only then
+publishes the outcome's accepted trace and `→ <acceptedOutcome>` status; an arm
+without the marker accepts its outcome silently, and the host counts none of the
+work it saved.
+
+### Auto-advance on approval
+
+A review/approval state's success outcome shall **target the next workflow step**, not idle back to a hub.
+Returning to Boss on success is a defect: it forces manual stepping.
+
+### Don't re-validate what already passed
+
+A state following an approval shall not enter a fresh approval of the same content — that adds latency and risks ping-pong loops.
+A state may route through approval once when its input came from an unreviewed branch (e.g., re-do without an intervening review).
+
+### One feedback cycle across phases
+
+When the source has a feedback cycle, all phases that need feedback shall reuse it, not duplicate it per phase.
+Phases may set typed routing fields so terminal outcomes return to the originating branch.
+
+## Boss control
+
+[Boss](text2gears.md#roles) input enters the machine through three surfaces: pre-emptive interrupts on active states, typed entry events on idle or recoverable states, and Boss replies to delegated-role questions that suspended the FSM in a dedicated wait state.
+
+### Boss interrupts
+
+Boss may interrupt any active state that can itself receive a Boss turn. Every
+jumpable state shall have a stable `id` [[9]]. A final state is not jumpable.
+A `playbook.suspended` call state with an outstanding child is also not a Boss
+interrupt target: the host routes Boss input to the active child leaf and
+resumes the parent only from the matching child result.
+The runtime sends `{ type: 'BOSS_INTERRUPT', targetId: '<id>' }`; the root machine handles it with one guarded transition per jumpable state targeting `#<id>` with `reenter: true` [[7]][[8]][[9]], so invoked actors restart cleanly.
+The compiler shall emit a `bossInterrupts(ids)` helper rather than hand-writing one transition per state.
+Each generated arm shall guard both the selected `targetId` and every typed
+context precondition required to enter that target safely. It shall not jump
+into a working or reassessment state with missing intent, prior result, plan,
+or other required context and shall not invent defaults merely to make an
+interrupt target executable.
+Control-action discovery probes these guards with optional textual fields
+omitted. Before applying a string operation such as `trim()`, a generated
+guard shall narrow the field to a string; a missing required textual field
+shall make the guard return false, never throw, so the control view remains
+total and omits an action whose payload the runtime cannot source.
+XState automatically stops the current state's invoked actor on transition [[2]].
+Where the default Captain's routing state accepts a fresh intent while another
+state or Boss-reply wait is active, its `BOSS_INTERRUPT` event shall carry a
+required non-empty `bossIntent`. The guarded routing arm shall copy that value,
+clear the prior plan, child evidence, exact-call history, selected call,
+response, error, and consumed question/reply context, then reenter routing.
+It shall not restart the old intent or retain a stale pending question.
+For this default Captain, `routing` is the sole `BOSS_INTERRUPT` target; a
+fresh directive always returns to routing and shall not jump directly into
+reassessment or the Boss-reply wait. The typed event union and classifier
+contract shall require exactly `targetId: 'routing'` plus the fresh
+`bossIntent`.
+
+### Boss entry events vs. BOSS_INTERRUPT
+
+`BOSS_INTERRUPT` jumps into an **active** machine, pre-empting whichever state is running.
+**Boss entry events** start or resume from idle or recoverable states when Boss-supplied parameters can't be inferred from machine state alone.
+Entry events shall be typed alongside `BOSS_INTERRUPT` and populate context via a dedicated action.
+Boss text supplied by an entry event shall not become a required machine-construction input unless Source independently requires that value before the first Boss turn; an optional source-appropriate seed may remain.
+A generated required input annotation alone is not evidence of that independent Source bootstrap requirement.
+Entry guards run before entry copy actions: validate supplied text from the
+current event, not solely from the context that action will populate.
+For an omitted event value, use an existing context seed only where Source
+permits it; do not manufacture a required constructor value to satisfy a
+context-only entry guard. The linked runtime sends the entry event normally;
+entry metadata does not copy fresh text into context before the guard.
+An entry event's copy action shall not clear per-run parameters the event omits: an absent optional field falls back to the existing (input-seeded) context value.
+The two surfaces shall not be collapsed. `BOSS_INTERRUPT` always carries its
+target id and may additionally carry typed Boss-supplied fields such as an
+intent or IR number only where Source requires the pre-empted target to consume
+them; a parameterless entry event may collapse to interrupt-style routing only
+when state-jump and context-update semantics are identical.
+Entry events shall not be root-level transitions from every active state unless the workflow supports pre-emption; they belong on idle and recoverable states (e.g., `failed`).
+
+### Boss-reply suspension
+
+When a captain- or player-invoking state needs a Boss decision the acting agent
+cannot supply alone, the machine shall suspend that task in a quiescent wait
+state and resume the same task with the Q+A in the next prompt.
+This is a third Boss surface alongside `BOSS_INTERRUPT` and Boss entry events.
+
+Every captain- and player-invoking state supports this path, with one
+exception the compiler shall apply, not infer: the states of a controller
+machine ([Setup](#setup), controller decision-state class) carry no
+Boss-reply suspension, because its hub already receives every Boss turn and a
+clarifying question to Boss is a `respond` selection over the closed action
+set. The rule below is therefore universal over workflow states and silent
+about that class; in particular, adding `needsBossReply` to the controller
+decision state would add an unauthorized outcome to its closed controller contract
+whose guard discriminants [Setup](#setup) fixes, and is nonconformant.
+There is no source-level opt-in annotation and no `needsBossReply` result metadata in GEARS output.
+The FSM compiler shall preserve the GEARS blockquote as the state's domain `prompt` body and shall not inject any Boss-question instruction into `invoke.input.prompt`.
+This preservation includes every literal leading `>` carried inside the outer GEARS blockquote for quoted runtime context.
+
+For every captain- and player-invoking state outside a controller machine,
+the compiler shall add
+`needsBossReply` to the state's `invoke.input.result` map.
+The description shall be the standard adjudicator-facing text:
+
+```text
+The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.
+```
+
+The standard annotated backtick form names the exact `question` property; the
+linker's required-field extractor shall interpret only the identifier before
+the colon as the JSON field name.
+The linked runtime composes player prompts per [link.md "Player prompt composition"](link.md#player-prompt-composition), without adding a player-visible Boss-question instruction.
+
+The question record shall be
+`{ questionId, resumeStateId, sourceItem, asker, question }`, where `asker` is exactly `{ kind: 'captain' }` or `{ kind: 'role', roleId }`.
+`questionId` and `resumeStateId` shall both equal the stable working-leaf
+`stateId`.
+`questionId`, `resumeStateId`, and `sourceItem` shall come from the suspended working leaf's stable invocation metadata.
+A delegated `PlayerInput` shall produce the role asker with its canonical local role id, while a direct-Captain state shall produce the Captain asker without inventing a role.
+Only
+`question` shall come from adjudicated actor output.
+
+The canonical storage paths are `context.pendingBossQuestion` and `context.bossReply` for the scalar form, or `context.pendingBossQuestions[stateId]` and `context.bossReplies[stateId]` for the keyed form.
+A private wrapper such as `context.continuation` shall not replace these fields directly on machine context.
+
+A machine that declares no root parallel group shall use the scalar form;
+keyed storage alone is not visible to the flat shared factory:
+
+- An `awaitBossReply` state with stable `id: 'awaitBossReply'`, tag
+  `playbook.parked`, and description
+  `Waiting for Boss to answer the acting agent's question.`.
+- A `BOSS_REPLY` event carrying `{ answer: string; questionId?: string }`.
+- Context fields `pendingBossQuestion?: PendingBossQuestion` and
+  `bossReply?: string`.
+- `resumableStates(ids)`, `setPendingBossQuestion`, and
+  `clearBossReplyContext` helpers with the existing single-question behavior.
+
+A machine that declares a root parallel group shall use the keyed form
+throughout the machine, including any sequential working leaves and their
+root reply wait:
+
+- One local waiting leaf per branch, tagged `playbook.parked`.
+- A `BOSS_REPLY` event carrying `{ questionId: string; answer: string }`.
+- Context fields
+  `pendingBossQuestions: Partial<Record<ResumableStateId, PendingBossQuestion>>`
+  and `bossReplies: Partial<Record<ResumableStateId, string>>`.
+- Helpers that set, answer, and clear only the named branch record; exiting the
+  complete parallel group for a fresh directive or interrupt clears every
+  record owned by that group.
+
+Where exactly one question is pending, a linked runtime may accept a classifier
+reply that omits `questionId` and fill that sole id.
+Where several questions are pending, the classifier prompt and event shall
+require `questionId` and shall reject an omitted or unknown id without moving
+the FSM.
+
+Every exit from a Captain- or player-invoking state other than into its own
+Boss-reply wait — an accepted outcome, the malformed-output fallback, an actor
+error — and every non-reply exit from a wait shall clear that state's pending
+question and reply context, so a call that fails after resuming leaves no
+stale question for the next turn's classifier to offer.
+
+The scalar `awaitBossReply` state and every local branch wait are quiescent for
+the runtime drive boundary.
+They shall allow a fresh root entry event or interrupt to abandon the relevant
+pending question data before starting new work.
+The wait state or branch-wait leaf itself shall not be an interrupt target:
+re-entering it after the interrupt clears its pending question would create an
+unresumable parked state. Its recorded working leaf remains the sole
+`BOSS_REPLY` resume destination.
+
+A captain- or player-invoking state's `invoke.input` function shall carry the
+pending question and reply selected for that working leaf as singular
+`pendingBossQuestion` and `bossReply` fields, regardless of the scalar or keyed
+context representation, so prompt composition has one stable contract.
+When Source requires earlier discussion or constraints on a later invocation, the compiler shall persist that source-owned history in serializable machine context before replacing or clearing the pending Q/A fields.
+Where that Source-owned value is the complete received Boss reply, retain it
+directly from the current working leaf's canonical reply context at the
+Source-authored accepted-outcome boundary, before clearing that leaf's Q/A.
+Preserve its exact string, including surrounding whitespace, CRLF/LF separators,
+blank lines and trailing separators; do not require a model-produced echo or
+replace it with one. Acceptance remains the acting agent's semantic judgment,
+guarded by the current matching question's state, Source-item and asker binding
+and actual receipt of a nonempty reply. Neither stale question/reply context
+nor a different actor-supplied value establishes that binding or approval.
+The later `invoke.input` shall relay that persisted context on both resumed and fresh calls that Source says need it, preserving Source-owned relevance and format without imposing all-history semantics on sources that do not require it.
+Shared Boss-reply continuation carries only the latest Q/A pair, and a backend continuation token is not durable Source history.
+When both fields are present, the linked runtime shall compose the continuation preamble and labelled Q&A blocks per [link.md "Player prompt composition"](link.md#player-prompt-composition).
+The FSM artifact shall not bake the continuation preamble into the GEARS-derived `prompt` body.
+
+The following malformed states shall route to `failed` per [Errors and termination](#errors-and-termination):
+
+- Captain or player output has `guard: 'needsBossReply'` but no `question`
+  field.
+- Captain or player output declares `needsBossReply` from a state without a
+  registered scalar or branch-local resume route.
+- `BOSS_REPLY` fired with empty or whitespace-only `answer`.
+- A keyed `BOSS_REPLY` names no pending question.
+
+## Errors and termination
+
+Every `invoke` shall declare an `onError` handler with a fallback routing to a
+dedicated `failed` state and capturing the error in `context.lastError` for
+inspection. A nested playbook invoke may place its validated authored-child
+recovery arm before that fallback as described in §Nested playbook calls.
+`failed` is not `final`: it shall carry tag `playbook.parked`, retain enough
+typed context for Boss recovery, and accept the workflow's recovery entry or
+interrupt surface. The parked tag distinguishes a recoverable failure from a
+busy state so the host retains the session instead of treating the outcome as
+an unhandled runtime error.
+
+Every machine shall declare at least one `type: 'final'` state (typically `done`) reachable on completion.
+A never-terminating machine is a defect: the runner has no completion signal.
+
+At least one is a floor, not a ceiling. A final state's `description` is the
+machine's published terminal meaning: a host that cannot read the machine's
+output quotes that description to report what the run did. It shall therefore
+be true of every arm that enters the state and of no other terminal outcome.
+Where Source declares more than one terminal outcome — an approval that
+completes the workflow and a failure the workflow reports to its caller
+instead of parking — each outcome shall get its own `type: 'final'` state
+whose description names it. Routing an approval arm and a failure, abort, or
+invalid-result arm into one final state is a defect of the same kind as a
+wrong result field, because the quoting host cannot detect the difference.
+This constrains only published meaning: the declared machine `output` still
+derives its status and fields from typed context, so a caller that does read
+the output is unaffected.
+
+Each final state shall additionally declare `terminal: 'success' | 'failure'`
+in its `meta.playbook`, derived from the Source's own outcome wording exactly
+as the description is: an outcome Source states as the workflow completing is
+`'success'`, and one Source states as a failure the workflow reports instead
+of parking is `'failure'`. The kind is fixed at compile time and adds no agent
+call. The runtime publishes it, with the reached state's id and description, as
+the completed run's terminal record, so this workflow's own caller learns
+whether it succeeded from the machine it reached rather than from these output
+fields.
+
+Where Source declares a JSON-safe terminal result, the setup types shall
+declare that output and the root machine shall derive it from typed context
+through XState's machine `output` function. A final-state transition alone does
+not satisfy a declared output contract.
+Where the selected pipeline supplies the
+[workflow contracts](workflow-contracts.json) catalog and the compiled Source's
+basename is one of its `literalTargetBindings`, the declared terminal output
+shall be exactly that builtin's public interface — its variants, `status`
+constants, property names, and requiredness — derived from typed context,
+because callers compiled against the catalog consume it by those names; an
+authored outcome the interface cannot express is an inconsistency between the
+Source and the catalog, reported as an incompatible compiler input under
+[Nested playbook calls](#nested-playbook-calls) rather than expressed by an
+invented or renamed outcome.
+Fields that Source requires in every terminal output shall be required in the
+TypeScript output type. In particular, a declared `{ response }` result shall
+compile as `{ response: string }`, not `{ response?: string }`; reaching the
+final state without a non-empty response shall be guarded out before the
+machine output is constructed.
+
+## Compiled execution
+
+This section governs compiled execution of this phase; the rules above remain the transformation's normative content for both execution paths.
+
+Where the phase host supplies `<definition>` as the exact bytes of the definition file the request names, when a transformation request names a `gears` Source (`.md`) and an `fsm` Target (`.ts`), Captain shall carry out the GEARS-to-FSM transformation as specified:
+
+> Follow the definition relayed between the `--- DEFINITION ---` and `--- END DEFINITION ---` lines exactly, adding no rules of your own: read the named Source and write the named Target as the definition specifies.
+> If the Source cannot be transformed under the definition, do not guess: leave the Target unwritten and report the concrete reason.
+> --- DEFINITION ---
+> \<definition\>
+> --- END DEFINITION ---
+
+Results:
+- `compiled`: Captain wrote the named Target as the relayed definition specifies.
+- `rejected`: Captain reported that the Source cannot be transformed under the relayed definition and left the Target unwritten.
+
+## References
+
+[1]: https://stately.ai/docs/xstate 'XState Official Documentation'
+[2]: https://stately.ai/docs/invoke 'Invoke — invoking actors from states'
+[3]: https://stately.ai/docs/input 'Input — passing data to invoked actors'
+[4]: https://stately.ai/docs/output 'Output — receiving actor results via onDone'
+[5]: https://stately.ai/docs/guards 'Guards — synchronous transition conditions'
+[6]: https://stately.ai/docs/context 'Context — persistent state and assign'
+[7]: https://stately.ai/docs/transitions 'Transitions — reenter, root-level routing'
+[8]: https://stately.ai/docs/parent-states 'Parent states — root-level event handling'
+[9]: https://stately.ai/docs/finite-states 'Finite states — state IDs'
+[10]: https://stately.ai/docs/setup 'Setup — typed machine setup'
+[11]: https://stately.ai/docs/actors 'Actors — typed actor contracts'
+[12]: https://stately.ai/docs/parallel-states 'Parallel states — concurrent regions and onDone joins'

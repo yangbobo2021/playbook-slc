@@ -1,0 +1,2861 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+/**
+ * End-to-end `slc` runner: composes the generic mechanics (DR-001, DR-002) with
+ * the execution boundary (DR-003) and an injected {@link PhaseExecutor}
+ * (interpreted per DR-004). It parses an invocation, resolves and loads the
+ * pipeline, computes artifact paths, then runs each phase through `runPhase`,
+ * stopping at the first failure with its report. The resolver and executor are
+ * injected so a host wires the real pipeline resolution and Cligent agent while
+ * tests supply fakes. See specs/packages/pipeline.md and specs/packages/phase-execution.md.
+ */
+
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import {
+  artifactDir,
+  planArtifacts,
+  parseSource,
+  type ArtifactWriter,
+} from './artifacts.js';
+import {
+  formatClarificationReport,
+  type ClarificationReport,
+} from './clarification.js';
+import {
+  encodeLocator,
+  invalidateBuildHistory,
+  loadBuildHistory,
+  recordBuild,
+  verifiedInput,
+  type BuildHistory,
+  type StepToRecord,
+} from './build-history.js';
+import { emitEntryModule } from './entry-module.js';
+import { managedCompilation } from './managed-compilation.js';
+import {
+  linkObjectEdges,
+  reconcileLinkObjectImportSpecifiers,
+  unresolvableRelativeImports,
+} from './emitted-imports.js';
+import { messageOf } from './errors.js';
+import {
+  assertSafeTarget,
+  type ExecuteRequest,
+  type LinkOptionPair,
+  type MechanicalReview,
+  type PhaseExecutor,
+  formatFailureReport,
+  phaseProtectedPaths,
+  pathsAlias,
+  runPhase,
+  watchProtectedPaths,
+} from './execution.js';
+import { compareUtf8, hashBytes, isHash, type Hash } from './hash.js';
+import { type Invocation, parseInvocation } from './invocation.js';
+import { unifiedLineDiff } from './line-diff.js';
+import {
+  PLAYBOOK_LINKED_FORMAT,
+  type LinkPhase,
+  linkedArtifactPath,
+  loadLinkFile,
+} from './link.js';
+import {
+  inspectClosureWithDeclaration,
+  type InspectedClosure,
+} from './pin-closure.js';
+import { PIN_INPUTS_FILE } from './pin-inputs.js';
+import { resolvePinPath } from './pin-paths.js';
+import type { ProgressSink } from './progress.js';
+import { evaluatePin, evaluatePinFile, hashTree } from './pin-currency.js';
+import {
+  PINS_FILE,
+  PinError,
+  loadPinFile,
+  type PinFile,
+  type PinRecord,
+} from './pins.js';
+import type { Phase } from './phase.js';
+import {
+  type Pipeline,
+  type PipelineResolver,
+  loadPipeline,
+  resolvePipeline,
+} from './pipeline.js';
+import {
+  RESERVED_SLC_PIPELINE,
+  defaultPlaybookLinkTarget,
+  isReservedPipeline,
+} from './resolver.js';
+import {
+  type PlaybookRuntimeDeclaration,
+  readPlaybookRuntimeDeclaration,
+} from './runtime-contract.js';
+import {
+  resolveCoverageBudget,
+  type CoverageBudget,
+  artifactSchemaForPlaybookProvenance,
+  checkFsmContinuationInputs,
+  checkFsmChildSuspension,
+  checkFsmCoverage,
+  checkGearsActorContract,
+  checkGearsPackageContract,
+  checkGearsFsmArtifact,
+  checkGearsResultContract,
+  emitFsmCoverageTest,
+  FsmCoverageDeadlineError,
+  emitFsmIntrospectionTest,
+  emitGearsFsmConformanceTest,
+  emitPromptContractTest,
+  inspectGearsRoleContract,
+  findMachineConfig,
+  loadFsmModule,
+  loadLinkedModuleForVerification,
+  playbookProvenanceForLinkTarget,
+  resolveArtifactSchemaForVerification,
+  type MachineConfigLike,
+} from './verify.js';
+import {
+  VERIFIER_SUPPORT_MODULE,
+  emitVerifierSupport,
+  verifierSupportFiles,
+} from './verify-support.js';
+import {
+  checkSourceGearsContract,
+  checkSourceRoles,
+  checkSourceReturnContracts,
+} from './verify-source.js';
+import { checkFsmTypeScript } from './verify-typescript.js';
+import { isolatedCheck } from './isolated-check.js';
+import { auditEvent } from './compilation-audit.js';
+import {
+  checkEntryOptions,
+  ENTRY_OPTIONS_CONTRACT,
+  linkedOptionsValidator,
+} from './entry-options.js';
+
+/** A current pinned phase and the record that selected its compiled artifact. */
+export interface CompiledSelection {
+  /** Pin key: the phase name, or `link` for the reserved link phase. */
+  phase: string;
+  /** The pipeline directory holding `slc.pins.json`. */
+  pipelineDir: string;
+  /** The current pin record naming the compiled artifact and its inputs. */
+  record: PinRecord;
+}
+
+/** Host-supplied capabilities for a run. */
+export interface SlcDeps {
+  /** Resolves a pipeline reference to candidate directories (DR-001). */
+  resolver: PipelineResolver;
+  /** Executes a phase by interpretation; the fallback for an unpinned phase (DR-004). */
+  executor: PhaseExecutor;
+  /**
+   * Builds the executor for a current pinned phase (DR-005, DR-007). When absent,
+   * a host runs interpreted only, so a current pin fails closed rather than
+   * silently interpreting a phase the pipeline pinned to a compiled artifact.
+   */
+  compiled?: (
+    selection: CompiledSelection,
+  ) => PhaseExecutor | Promise<PhaseExecutor>;
+  /** Invocation working directory anchoring artifact placement (DR-014); defaults to the process cwd. */
+  cwd?: string;
+  signal?: AbortSignal;
+  coverage?: CoverageBudget;
+  /** Non-secret effective CLI selections for managed invocation provenance. */
+  auditConfiguration?: unknown;
+  /**
+   * Receives phase start/finish/failure events with elapsed times as the run
+   * progresses (DR-019, cli-32). Absent for hosts that want a quiet run.
+   */
+  progress?: ProgressSink;
+  /** Final managed-bundle acceptance before incremental success publication. */
+  finalize?: (result: SlcResult) => Promise<SlcResult>;
+  /** Recheck retained bytes after compiler/runtime identity changes. */
+  revalidateReuse?: boolean;
+}
+
+/** The outcome of an `slc` run. */
+export interface SlcResult {
+  ok: boolean;
+  cause?: {
+    category: import('./check-report.js').CheckFailureCategory;
+    source: 'compiler-diagnostic';
+  };
+  /** Artifact paths written, in order. */
+  outputs: string[];
+  /** Diagnostics: agent summaries on success, or the failure report. */
+  diagnostics: string[];
+  /** Distinguishes unchanged success and actionable source questions. */
+  outcome?: 'up-to-date' | 'clarification-required';
+  clarification?: ClarificationReport;
+}
+
+/**
+ * Parses argv and runs the requested pipeline, phase, or link end-to-end.
+ * Never rejects: malformed invocations, refusals, and phase failures all return
+ * `{ ok: false }` with diagnostics.
+ */
+async function runSlcCore(
+  argv: readonly string[],
+  deps: SlcDeps,
+): Promise<SlcResult> {
+  let invocation: Invocation;
+  let coverage: Readonly<Required<CoverageBudget>>;
+  try {
+    coverage = resolveCoverageBudget(deps.coverage);
+    invocation = parseInvocation(argv);
+  } catch (error) {
+    return failure(messageOf(error));
+  }
+
+  const finish = (result: SlcResult): SlcResult => {
+    if (result.clarification === undefined) return result;
+    const clarification: ClarificationReport = {
+      ...result.clarification,
+      sources: (invocation.kind === 'link'
+        ? invocation.objects
+        : [invocation.source]
+      ).map((path) => resolve(runCwd(deps), path)),
+    };
+    return {
+      ...result,
+      clarification,
+      diagnostics: [
+        ...result.diagnostics,
+        formatClarificationReport(clarification),
+      ],
+    };
+  };
+
+  try {
+    switch (invocation.kind) {
+      case 'complete':
+        return finish(await runCompletion(invocation, deps, coverage));
+      case 'full':
+        // The reserved playbook pipeline supplies a default link target
+        // (self-hosting-13): a bare full run becomes a full-link against the
+        // installed @sublang/playbook runtime contract module (DR-014).
+        if (invocation.pipeline === 'playbook') {
+          return finish(
+            await runFullLink(
+              {
+                ...invocation,
+                kind: 'full-link',
+                linkTarget: defaultPlaybookLinkTarget(),
+                options: [],
+              },
+              deps,
+              coverage,
+            ),
+          );
+        }
+        return finish(await runFull(invocation, deps, coverage));
+      case 'phase':
+        return finish(await runSinglePhase(invocation, deps, coverage));
+      case 'link':
+        return finish(await runDirectLink(invocation, deps, coverage));
+      case 'full-link':
+        return finish(await runFullLink(invocation, deps, coverage));
+    }
+  } catch (error) {
+    return failure(messageOf(error));
+  }
+}
+
+async function runFull(
+  invocation: Extract<Invocation, { kind: 'full' }>,
+  deps: SlcDeps,
+  coverage: Readonly<Required<CoverageBudget>>,
+): Promise<SlcResult> {
+  const cwd = runCwd(deps);
+  const pipeline = await loadPipeline(
+    await resolvePipeline(invocation.pipeline, deps.resolver),
+  );
+  const entry = pipeline.phases[0];
+  const source = resolve(cwd, invocation.source);
+  const { basename, raw } = parseSource({
+    path: source,
+    sourceFormat: entry.source.format,
+    ext: entry.source.ext,
+    entry: true,
+  });
+  const artDir = artifactDir(cwd, basename, invocation.pipeline);
+  await mkdir(artDir, { recursive: true });
+
+  const plan = planArtifacts({
+    phases: pipeline.phases,
+    basename,
+    artDir,
+    output:
+      invocation.output === null ? undefined : resolve(cwd, invocation.output),
+  });
+  const steps = buildCompileSteps({
+    coverage,
+    pipeline,
+    plan,
+    source,
+    artDir,
+    basename,
+    optimize: !invocation.noOptimize,
+    normalize: invocation.normalize || raw,
+    sourceFidelity: invocation.pipeline !== RESERVED_SLC_PIPELINE,
+    signal: deps.signal,
+  });
+  const verification = {
+    coverage,
+    pipeline: invocation.pipeline,
+    plan,
+    artDir,
+    basename,
+  };
+  return executeSteps(steps, pipeline, deps, {
+    incremental: incrementalRun(invocation, artDir, source),
+    hostTargets: verificationHostTargets(verification),
+    complete: (result, guardTarget) =>
+      emitVerification(result, verification, guardTarget),
+  });
+}
+
+/** History covers only canonical full/full-link runs outside the `slc` meta-pipeline. */
+function incrementalRun(
+  invocation: Extract<Invocation, { kind: 'full' | 'full-link' }>,
+  artDir: string,
+  source: string,
+): IncrementalRun | undefined {
+  if (invocation.output !== null || invocation.pipeline === 'slc') {
+    return undefined;
+  }
+  return {
+    artDir,
+    source,
+    pipelineName: invocation.pipeline,
+    rebuild: invocation.rebuild === true,
+  };
+}
+
+async function runSinglePhase(
+  invocation: Extract<Invocation, { kind: 'phase' }>,
+  deps: SlcDeps,
+  coverage: Readonly<Required<CoverageBudget>>,
+): Promise<SlcResult> {
+  const cwd = runCwd(deps);
+  const pipeline = await loadPipeline(
+    await resolvePipeline(invocation.pipeline, deps.resolver),
+  );
+  const phase = [...pipeline.phases, ...pipeline.passes].find(
+    (candidate) => candidate.name === invocation.phase,
+  );
+  if (phase === undefined) {
+    return failure(
+      `phase "${invocation.phase}" is not part of pipeline "${invocation.pipeline}"`,
+    );
+  }
+
+  const source = resolve(cwd, invocation.source);
+  const { basename, raw } = parseSource({
+    path: source,
+    sourceFormat: phase.source.format,
+    ext: phase.source.ext,
+    entry: pipeline.phases[0] === phase,
+    staged: phase.pass,
+  });
+  if (raw) {
+    // A named phase cannot normalize (pipeline-37), so a raw entry source has no
+    // path into the phase's declared source format here.
+    return failure(
+      `source "${invocation.source}" is a raw input; run the full pipeline to normalize it`,
+    );
+  }
+  const artDir = artifactDir(cwd, basename, invocation.pipeline);
+  await mkdir(artDir, { recursive: true });
+  const sourceFidelity = invocation.pipeline !== RESERVED_SLC_PIPELINE;
+
+  if (phase.pass) {
+    // A standalone pass run cannot overwrite its own source: it writes the
+    // `.opt` sibling unless `-o` relocates it (DR-013).
+    const target =
+      (invocation.output === null ? null : resolve(cwd, invocation.output)) ??
+      join(artDir, `${basename}.${phase.target.format}.opt${phase.target.ext}`);
+    const step = compileStep(
+      pipeline,
+      phase,
+      source,
+      target,
+      sourceFidelity,
+      undefined,
+      deps.signal,
+      coverage,
+    );
+    return executeSteps([step], pipeline, deps);
+  }
+
+  // Plan over the whole chain so the named phase keeps its pipeline role: a
+  // non-terminal phase writes its canonical intermediate and ignores `-o`
+  // (DR-001 -- artifact location depends on role, not invocation mode).
+  const plan = planArtifacts({
+    phases: pipeline.phases,
+    basename,
+    artDir,
+    output:
+      invocation.output === null ? undefined : resolve(cwd, invocation.output),
+  });
+  const artifact = plan[pipeline.phases.indexOf(phase)];
+  const step = compileStep(
+    pipeline,
+    phase,
+    source,
+    artifact.path,
+    sourceFidelity,
+    undefined,
+    deps.signal,
+    coverage,
+  );
+  return executeSteps([step], pipeline, deps);
+}
+
+async function runDirectLink(
+  invocation: Extract<Invocation, { kind: 'link' }>,
+  deps: SlcDeps,
+  coverage: Readonly<Required<CoverageBudget>>,
+): Promise<SlcResult> {
+  const cwd = runCwd(deps);
+  const pipeline = await loadPipeline(
+    await resolvePipeline(invocation.pipeline, deps.resolver),
+  );
+  const link = await requireLink(pipeline, invocation.pipeline);
+  const linked = linkedArtifactPath({
+    kind: 'link',
+    pipeline: invocation.pipeline,
+    objects: invocation.objects.map((path) => resolve(cwd, path)),
+    source: link.source,
+    linked: link.target,
+    output: invocation.output === null ? null : resolve(cwd, invocation.output),
+    cwd,
+  });
+  await mkdir(dirname(linked), { recursive: true });
+
+  return executeSteps(
+    [
+      linkStep({
+        coverage,
+        link,
+        definitionPath: pipeline.linkFile as string,
+        objects: invocation.objects.map((path) => resolve(cwd, path)),
+        linkTarget: resolve(cwd, invocation.linkTarget),
+        options: invocation.options,
+        linked,
+        signal: deps.signal,
+      }),
+    ],
+    pipeline,
+    deps,
+  );
+}
+
+async function runFullLink(
+  invocation: Extract<Invocation, { kind: 'full-link' }>,
+  deps: SlcDeps,
+  coverage: Readonly<Required<CoverageBudget>>,
+): Promise<SlcResult> {
+  const cwd = runCwd(deps);
+  const pipeline = await loadPipeline(
+    await resolvePipeline(invocation.pipeline, deps.resolver),
+  );
+  const link = await requireLink(pipeline, invocation.pipeline);
+  const entry = pipeline.phases[0];
+  const source = resolve(cwd, invocation.source);
+  const { basename, raw } = parseSource({
+    path: source,
+    sourceFormat: entry.source.format,
+    ext: entry.source.ext,
+    entry: true,
+  });
+  const normalize = invocation.normalize || raw;
+  const artDir = artifactDir(cwd, basename, invocation.pipeline);
+  await mkdir(artDir, { recursive: true });
+
+  // Compile chain: the exit artifact becomes the object artifact (pipeline-15).
+  const plan = planArtifacts({ phases: pipeline.phases, basename, artDir });
+  const compileSteps = buildCompileSteps({
+    coverage,
+    pipeline,
+    plan,
+    source,
+    artDir,
+    basename,
+    optimize: !invocation.noOptimize,
+    normalize,
+    sourceFidelity: invocation.pipeline !== RESERVED_SLC_PIPELINE,
+    signal: deps.signal,
+    linkTarget: resolve(cwd, invocation.linkTarget),
+  });
+
+  const linked = linkedArtifactPath({
+    kind: 'full',
+    artDir,
+    basename,
+    linked: link.target,
+    output: invocation.output === null ? null : resolve(cwd, invocation.output),
+  });
+  const gearsPlan = plan.find(
+    (artifact) => artifact.phase.target.format === 'gears',
+  );
+  const entryCandidate =
+    invocation.pipeline === 'playbook' &&
+    invocation.output === null &&
+    gearsPlan !== undefined
+      ? resolve(cwd, `${basename}.mjs`)
+      : null;
+  const entryAliasesSource =
+    entryCandidate !== null && (await pathsAlias(entryCandidate, source));
+  const entryPath = entryAliasesSource ? null : entryCandidate;
+  const steps = [
+    ...compileSteps,
+    linkStep({
+      coverage,
+      link,
+      definitionPath: pipeline.linkFile as string,
+      objects: [plan[plan.length - 1].path],
+      linkTarget: resolve(cwd, invocation.linkTarget),
+      options: invocation.options,
+      linked,
+      signal: deps.signal,
+      ...(entryPath !== null && gearsPlan !== undefined
+        ? { entryGearsPath: gearsPlan.path }
+        : {}),
+    }),
+  ];
+
+  const verification = {
+    coverage,
+    pipeline: invocation.pipeline,
+    plan,
+    artDir,
+    basename,
+    linkTarget: resolve(cwd, invocation.linkTarget),
+  };
+  return executeSteps(steps, pipeline, deps, {
+    incremental: incrementalRun(invocation, artDir, source),
+    hostTargets: [
+      ...verificationHostTargets(verification),
+      ...(entryPath === null ? [] : [{ path: entryPath }]),
+    ],
+    complete: async (result, guardTarget) => {
+      const verified = await emitVerification(
+        result,
+        verification,
+        guardTarget,
+      );
+
+      if (verified.ok && entryCandidate !== null && entryAliasesSource) {
+        return {
+          ...verified,
+          diagnostics: [
+            ...verified.diagnostics,
+            `entry module ${entryCandidate} not emitted because it aliases the invocation source`,
+          ],
+        };
+      }
+
+      // Entry-module emission (DR-014, self-hosting-15): only the playbook
+      // pipeline, only with the linked artifact at its canonical path.
+      if (verified.ok && entryPath !== null && gearsPlan !== undefined) {
+        await guardTarget(entryPath);
+        const textPath = normalize
+          ? join(
+              artDir,
+              `${basename}.${entry.source.format}${entry.source.ext}`,
+            )
+          : source;
+        await emitEntryModule({
+          cwd,
+          basename,
+          pipeline: invocation.pipeline,
+          gearsPath: gearsPlan.path,
+          textPath,
+          artifactDir: artDir,
+        });
+        const missing = await unresolvableRelativeImports(entryPath);
+        if (missing.length > 0) {
+          return {
+            ok: false,
+            outputs: verified.outputs,
+            diagnostics: [
+              ...verified.diagnostics,
+              `entry module ${entryPath} has unresolvable relative imports: ` +
+                `${missing.join(', ')} (verification-18)`,
+            ],
+          };
+        }
+        return { ...verified, outputs: [...verified.outputs, entryPath] };
+      }
+      return verified;
+    },
+  });
+}
+
+/** The invocation working directory anchoring artifact placement (DR-014). */
+function runCwd(deps: SlcDeps): string {
+  return resolve(deps.cwd ?? process.cwd());
+}
+
+/** Checks an explicitly selected current bundle, without executing phases/history. */
+async function runCompletion(
+  invocation: Extract<Invocation, { kind: 'complete' }>,
+  deps: SlcDeps,
+  coverage: Readonly<Required<CoverageBudget>>,
+): Promise<SlcResult> {
+  const cwd = runCwd(deps);
+  const pipeline = await loadPipeline(
+    await resolvePipeline(invocation.pipeline, deps.resolver),
+  );
+  const link = await requireLink(pipeline, invocation.pipeline);
+  const entry = pipeline.phases[0];
+  const source = resolve(cwd, invocation.source);
+  const { basename, raw } = parseSource({
+    path: source,
+    sourceFormat: entry.source.format,
+    ext: entry.source.ext,
+    entry: true,
+  });
+  if (raw)
+    return failure(
+      'completion requires an entry-form Source; explicitly normalize or compile raw input first',
+    );
+  const artDir = artifactDir(cwd, basename, invocation.pipeline);
+  const plan = planArtifacts({ phases: pipeline.phases, basename, artDir });
+  const gears = plan.find(
+    (artifact) => artifact.phase.target.format === 'gears',
+  );
+  const fsm = plan.find((artifact) => artifact.phase.target.format === 'fsm');
+  if (
+    entry.source.format !== 'text' ||
+    entry.source.ext !== '.md' ||
+    gears?.phase.target.ext !== '.md' ||
+    fsm?.phase.target.ext !== '.ts' ||
+    link.source.format !== 'fsm' ||
+    link.source.ext !== '.ts' ||
+    link.target.format !== 'playbook' ||
+    link.target.ext !== '.ts'
+  )
+    return failure(
+      'completion requires the text/GEARS/TypeScript-FSM/Playbook canonical pipeline formats',
+    );
+  const linked = join(artDir, `${basename}.playbook.ts`);
+  const entryPath = join(cwd, `${basename}.mjs`);
+  const linkTarget =
+    invocation.linkTarget === null
+      ? defaultPlaybookLinkTarget()
+      : resolve(cwd, invocation.linkTarget);
+  const selected = [source, gears.path, fsm.path, linked, linkTarget];
+  for (const path of selected) {
+    try {
+      if (!(await stat(path)).isFile()) throw new Error('not a regular file');
+      await readFile(path);
+    } catch (error) {
+      return failure(
+        `completion requires readable file ${path}: ${messageOf(error)}`,
+      );
+    }
+  }
+  const pinInputs = new Set([
+    join(pipeline.dir, PINS_FILE),
+    join(pipeline.dir, PIN_INPUTS_FILE),
+  ]);
+  const pinFile = (await loadPinFile(pipeline.dir)).file;
+  if (pinFile !== undefined) {
+    await evaluatePinFile(pipeline.dir, pinFile, {
+      observePath: (path) => pinInputs.add(resolve(path)),
+    });
+  }
+  const definitions = chainDefinitions(pipeline);
+  const declared = await declaredInputPaths(
+    pipeline,
+    pinFile,
+    [...pipeline.phases, ...pipeline.passes]
+      .map((phase) => ({
+        path: phaseDefinition(pipeline, phase.name),
+        phase: phase.name,
+      }))
+      .concat([{ path: pipeline.linkFile as string, phase: 'link' }]),
+  );
+  const verification = {
+    coverage,
+    pipeline: invocation.pipeline,
+    plan,
+    artDir,
+    basename,
+    linkTarget,
+  };
+  const targets = [
+    ...verificationHostTargets(verification),
+    { path: entryPath },
+  ];
+  const protectedInputs = [
+    ...new Set([
+      ...selected,
+      ...definitions,
+      ...declared.paths,
+      ...pinInputs,
+      join(artDir, '.slc', 'latest'),
+      join(artDir, '.slc', 'builds'),
+      ...targets.flatMap((target) => target.protectedInputs ?? []),
+    ]),
+  ];
+  // Reuse ordinary definition/pin validation and physical output guards. There
+  // are deliberately no steps and no incremental context to execute or publish.
+  return executeSteps([], pipeline, deps, {
+    hostTargets: targets.map((target) => ({
+      ...target,
+      required: true,
+      protectedInputs,
+    })),
+    complete: async (_result, guardTarget) => {
+      const unchanged = await watchProtectedPaths(protectedInputs);
+      const pending = new Map<string, string>();
+      const prepare: ArtifactWriter = async (path, content) => {
+        if (pending.has(path))
+          throw new Error(`duplicate completion output: ${path}`);
+        pending.set(path, content);
+      };
+      let findings: readonly string[];
+      let prepared: SlcResult | undefined;
+      try {
+        deps.signal?.throwIfAborted();
+        // The emitted entry must load the very FSM bytes checked below: refuse
+        // a JavaScript edge, and require a value import of the TypeScript FSM.
+        const edges = await linkObjectEdges(linked, fsm.path);
+        findings = edges.javascript.map(
+          (specifier) =>
+            `completion cannot verify JavaScript FSM import ${specifier} against checked ${fsm.path}; review and correct the retained linked import to select the TypeScript FSM, then rerun --complete`,
+        );
+        if (findings.length === 0 && edges.typescript.length === 0)
+          findings = [
+            `completion found no value import of the checked ${fsm.path} in linked module ${linked}; review and correct the retained linked import to select the TypeScript FSM, then rerun --complete`,
+          ];
+        if (findings.length === 0)
+          findings = [
+            ...(await sourceFidelityFindings(source, gears.path)),
+            ...(await gearsContractFindings(gears.path)),
+            ...inspectGearsRoleContract(await readFile(gears.path, 'utf8'))
+              .findings,
+            ...(await checkFsmTypeScript(fsm.path, deps.signal)),
+          ];
+        if (findings.length === 0)
+          findings = await isolatedCheck(
+            'fsm',
+            [gears.path, fsm.path, linkTarget, coverage],
+            deps.signal,
+          );
+        if (findings.length === 0) {
+          findings = await isolatedCheck(
+            'linked',
+            [linked, fsm.path, false],
+            deps.signal,
+          );
+        }
+        if (findings.length === 0) {
+          const module = (await loadLinkedModuleForVerification({
+            linkedPath: linked,
+            fsmPath: fsm.path,
+          })) as { default?: unknown };
+          if (typeof module.default !== 'function')
+            findings = [
+              'linked module has no callable default runtime factory',
+            ];
+          else if (
+            inspectGearsRoleContract(await readFile(gears.path, 'utf8'))
+              .generation === 'schema-3' &&
+            (await linkedOptionsValidator({
+              linkedPath: linked,
+              fsmPath: fsm.path,
+            })) !== undefined
+          ) {
+            findings = await checkEntryOptions({
+              linkedPath: linked,
+              fsmPath: fsm.path,
+              signal: deps.signal,
+            });
+          }
+        }
+        if (findings.length === 0) {
+          const missing = await unresolvableRelativeImports(linked);
+          if (missing.length > 0)
+            findings = [
+              `linked module has unresolvable relative imports: ${missing.join(', ')}`,
+            ];
+        }
+        if (findings.length === 0) {
+          const advisories = new Set<string>();
+          prepared = await emitVerification(
+            { ok: true, outputs: [], diagnostics: [] },
+            verification,
+            guardTarget,
+            prepare,
+            (diagnostic) => advisories.add(diagnostic),
+          );
+          await emitEntryModule({
+            cwd,
+            basename,
+            pipeline: invocation.pipeline,
+            gearsPath: gears.path,
+            textPath: source,
+            artifactDir: artDir,
+            write: prepare,
+          });
+          const missing = targets.filter((target) => !pending.has(target.path));
+          findings = [
+            ...prepared.diagnostics.filter(
+              (diagnostic) => !advisories.has(diagnostic),
+            ),
+            ...missing.map(
+              (target) =>
+                `required completion output was not prepared: ${target.path}`,
+            ),
+          ];
+        }
+      } catch (error) {
+        findings = [`completion checks could not finish: ${messageOf(error)}`];
+      }
+      const changes = await unchanged();
+      if (changes.length > 0) findings = changes;
+      if (findings.length > 0)
+        return failure(
+          formatFailureReport({
+            phase: 'complete',
+            target: entryPath,
+            reasons: [...findings],
+          }),
+        );
+      if (prepared === undefined)
+        throw new Error('completion preparation missing');
+      for (const target of targets) await guardTarget(target.path);
+      deps.signal?.throwIfAborted();
+      const outputs: string[] = [];
+      try {
+        for (const path of [...prepared.outputs, entryPath]) {
+          deps.signal?.throwIfAborted();
+          await guardTarget(path);
+          await mkdir(dirname(path), { recursive: true });
+          await writeFile(path, pending.get(path) as string);
+          outputs.push(path);
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          outputs,
+          diagnostics: [
+            `completion output write failed: ${messageOf(error)}`,
+            ...outputs.map((path) => `completion already wrote ${path}`),
+          ],
+        };
+      }
+      return {
+        ok: true,
+        outputs,
+        diagnostics: [
+          ...prepared.diagnostics,
+          'checked retained current bundle; no phases executed or build history published',
+        ],
+      };
+    },
+  });
+}
+
+/**
+ * After a reserved-pipeline full run produces a `gears` intermediate and an `fsm`
+ * object at their canonical `<basename>.playbook/` locations, emits the
+ * artifact-local checker support plus compilation-correctness tests beside
+ * them as `slc` output, appending their paths to the outputs (verification-2,
+ * verification-4;
+ * [DR-009](../decisions/009-slc-playbook-pipeline-compilation.md)).
+ * Non-reserved pipelines, runs without a gears+fsm pair, and runs whose `fsm` was
+ * relocated out of that directory by `-o` (pipeline-8) are left unchanged, so an
+ * emitted test never imports a file that was not written beside it. A test whose
+ * emission needs the produced `fsm` imported (the pinned introspection) degrades
+ * to a diagnostic when the artifact cannot be loaded, leaving the run outcome
+ * unchanged — the conformance test still fails at test time on a broken module.
+ */
+async function emitVerification(
+  result: SlcResult,
+  ctx: VerificationContext,
+  guardTarget?: CompletionTargetGuard,
+  write?: ArtifactWriter,
+  onAdvisory?: (diagnostic: string) => void,
+): Promise<SlcResult> {
+  if (!result.ok) return result;
+  const hostTargets = verificationHostTargets(ctx);
+  if (hostTargets.length === 0) return result;
+  const fsm = ctx.plan.find(
+    (artifact) => artifact.phase.target.format === 'fsm',
+  );
+  if (fsm === undefined) throw new Error('verification plan lost its FSM');
+  const provenance =
+    ctx.linkTarget === undefined
+      ? undefined
+      : await playbookProvenanceForLinkTarget(ctx.linkTarget);
+  // A provenance outside the exact historical map is schema evidence only
+  // through the installed engine's own declaration (DR-028); an unreadable
+  // engine simply supplies no signal, and the emission reports the gap.
+  const runtimeDeclaration =
+    ctx.linkTarget === undefined ||
+    artifactSchemaForPlaybookProvenance(provenance) !== undefined
+      ? undefined
+      : await linkTargetRuntimeDeclaration(ctx.linkTarget);
+  const evidence = {
+    ...(provenance === undefined ? {} : { provenance }),
+    ...(runtimeDeclaration === undefined ? {} : { runtimeDeclaration }),
+  };
+  const schemaResolution = await resolveVerificationSchema(ctx, evidence);
+  const artifactSchema = schemaResolution.artifactSchema;
+  const outputs = [...result.outputs];
+  const diagnostics = [...result.diagnostics];
+  if (guardTarget !== undefined) {
+    for (const target of verifierSupportFiles(ctx.artDir)) {
+      await guardTarget(target.target);
+    }
+  }
+  outputs.push(...(await emitVerifierSupport(ctx.artDir, write)));
+  if (guardTarget !== undefined) {
+    await guardTarget(join(ctx.artDir, `${ctx.basename}.gears-fsm.test.ts`));
+  }
+  outputs.push(
+    await emitGearsFsmConformanceTest({
+      coverage: ctx.coverage,
+      artifactDir: ctx.artDir,
+      basename: ctx.basename,
+      verifyModule: VERIFIER_SUPPORT_MODULE,
+      ...(artifactSchema === undefined ? {} : { artifactSchema }),
+      schemaFindings: schemaResolution.findings,
+      write,
+    }),
+  );
+  try {
+    if (guardTarget !== undefined) {
+      await guardTarget(
+        join(ctx.artDir, `${ctx.basename}.fsm.introspect.test.ts`),
+      );
+    }
+    outputs.push(
+      await emitFsmIntrospectionTest({
+        artifactDir: ctx.artDir,
+        basename: ctx.basename,
+        verifyModule: VERIFIER_SUPPORT_MODULE,
+        write,
+      }),
+    );
+  } catch (error) {
+    diagnostics.push(
+      `verification: introspection test not emitted: ${messageOf(error)}`,
+    );
+  }
+  try {
+    if (guardTarget !== undefined) {
+      await guardTarget(
+        join(ctx.artDir, `${ctx.basename}.prompt-contract.test.ts`),
+      );
+    }
+    const promptContract = await emitPromptContractTest({
+      artifactDir: ctx.artDir,
+      basename: ctx.basename,
+      verifyModule: VERIFIER_SUPPORT_MODULE,
+      ...(artifactSchema === undefined ? {} : { artifactSchema }),
+      ...evidence,
+      write,
+    });
+    outputs.push(promptContract.path);
+    for (const advisory of promptContract.advisories)
+      onAdvisory?.(`verification: ${advisory}`);
+    diagnostics.push(
+      ...promptContract.diagnostics.map(
+        (diagnostic) => `verification: ${diagnostic}`,
+      ),
+    );
+  } catch (error) {
+    diagnostics.push(
+      `verification: prompt-contract test not emitted: ${messageOf(error)}`,
+    );
+  }
+  try {
+    if (guardTarget !== undefined) {
+      await guardTarget(
+        join(ctx.artDir, `${ctx.basename}.fsm.coverage.test.ts`),
+      );
+    }
+    const coverage = await emitFsmCoverageTest({
+      coverage: ctx.coverage,
+      artifactDir: ctx.artDir,
+      basename: ctx.basename,
+      verifyModule: VERIFIER_SUPPORT_MODULE,
+      ...(artifactSchema === undefined ? {} : { artifactSchema }),
+      write,
+    });
+    outputs.push(coverage.path);
+    diagnostics.push(
+      ...coverage.diagnostics.map(
+        (diagnostic) => `verification: ${diagnostic}`,
+      ),
+    );
+  } catch (error) {
+    diagnostics.push(
+      `verification: coverage test not emitted: ${messageOf(error)}`,
+    );
+  }
+  return { ...result, outputs, diagnostics };
+}
+
+/** Reads the link target's engine declaration; unreadable is no evidence. */
+async function linkTargetRuntimeDeclaration(
+  linkTarget: string,
+): Promise<PlaybookRuntimeDeclaration | undefined> {
+  try {
+    return await readPlaybookRuntimeDeclaration(linkTarget);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Reconciles every schema witness available from one just-built artifact. */
+async function resolveVerificationSchema(
+  ctx: VerificationContext,
+  evidence: {
+    provenance?: string;
+    runtimeDeclaration?: PlaybookRuntimeDeclaration;
+  },
+): Promise<{ artifactSchema?: 1 | 3; findings: string[] }> {
+  const fsmPath = join(ctx.artDir, `${ctx.basename}.fsm.ts`);
+  let config: ReturnType<typeof findMachineConfig> | undefined;
+  try {
+    config = findMachineConfig(await loadFsmModule(fsmPath));
+  } catch {
+    // Broken FSM loading already degrades the generated derivation checks to
+    // diagnostics; reviewed provenance remains usable conformance evidence.
+  }
+
+  let linked: { default?: unknown } | undefined;
+  try {
+    linked = (await loadLinkedModuleForVerification({
+      linkedPath: join(ctx.artDir, `${ctx.basename}.playbook.ts`),
+      fsmPath,
+    })) as { default?: unknown };
+  } catch {
+    // A missing module supplies no signal; prompt emission reports an
+    // unloadable module through its existing diagnostic.
+  }
+
+  return resolveArtifactSchemaForVerification({
+    ...evidence,
+    ...(config === undefined ? {} : { config }),
+    ...(linked === undefined ? {} : { linked }),
+  });
+}
+
+interface VerificationContext {
+  coverage?: CoverageBudget;
+  pipeline: string;
+  plan: readonly {
+    path: string;
+    phase: { name: string; target: { format: string; ext: string } };
+  }[];
+  artDir: string;
+  basename: string;
+  /** Declared engine target used as schema evidence, not artifact-origin proof. */
+  linkTarget?: string;
+}
+
+/** Exact deterministic writes attempted by {@link emitVerification}. */
+function verificationHostTargets(ctx: VerificationContext): HostTarget[] {
+  if (!isReservedPipeline(ctx.pipeline)) return [];
+  const fsm = ctx.plan.find(
+    (artifact) => artifact.phase.target.format === 'fsm',
+  );
+  const hasGears = ctx.plan.some(
+    (artifact) => artifact.phase.target.format === 'gears',
+  );
+  if (fsm === undefined || !hasGears) return [];
+  const canonicalFsm = join(
+    ctx.artDir,
+    `${ctx.basename}.fsm${fsm.phase.target.ext}`,
+  );
+  if (fsm.path !== canonicalFsm) return [];
+
+  return [
+    ...verifierSupportFiles(ctx.artDir).map(({ source, target }) => ({
+      path: target,
+      protectedInputs: [source],
+      allowVerifierOutput: true,
+    })),
+    { path: join(ctx.artDir, `${ctx.basename}.gears-fsm.test.ts`) },
+    {
+      path: join(ctx.artDir, `${ctx.basename}.fsm.introspect.test.ts`),
+      required: false,
+    },
+    {
+      path: join(ctx.artDir, `${ctx.basename}.prompt-contract.test.ts`),
+      required: false,
+    },
+    {
+      path: join(ctx.artDir, `${ctx.basename}.fsm.coverage.test.ts`),
+      required: false,
+    },
+  ];
+}
+
+/** One phase to run: its execute request and the checks `runPhase` needs. */
+interface PhaseStep {
+  request: ExecuteRequest;
+  phase: string;
+  /** Pipeline pin key; absent for the host-owned normalization step. */
+  pinKey?: string;
+  targetExt: string;
+  /** Host-owned contract for a newly executed entry-bearing link. */
+  outputContract?: () => Promise<string | undefined>;
+  /** Composed existing checks over a compile phase's live target. */
+  compileFidelity?: MechanicalReview;
+  /** Existing GEARS source findings must precede consumer construction. */
+  gearsSourceContract?: MechanicalReview;
+  /** A text-to-GEARS Source's role names must be valid before any agent runs. */
+  sourceRoles?: MechanicalReview;
+  /** Strict FSM input checks run before constructing a protected-input consumer. */
+  fsmSourceTypecheck?: MechanicalReview;
+  /** Canonical continuation inputs must be valid before consumer construction. */
+  fsmSourceContinuation?: MechanicalReview;
+  /** Present for a gated `playbook` link step (DR-030, phase-execution-53). */
+  linkFidelity?: MechanicalReview;
+}
+
+/** A canonical full/full-link invocation eligible for history. */
+interface IncrementalRun {
+  artDir: string;
+  source: string;
+  pipelineName: string;
+  rebuild: boolean;
+}
+
+interface AcceptedStep {
+  step: PhaseStep;
+  target: string;
+  inputs: Hash[] | null;
+  output: Hash | null;
+}
+
+/** The only live state needed by the success-only history transition. */
+interface IncrementalState extends IncrementalRun {
+  active: boolean;
+  history: BuildHistory | null;
+  sourceBytes: Buffer;
+  invalidated: boolean;
+  executed: number;
+  accepted: AcceptedStep[];
+}
+
+interface StepIdentity {
+  inputs: Hash[];
+  /** Present only for a compile step, for rendering its update diff. */
+  chainedInput?: Buffer;
+}
+
+interface DeclaredInputs {
+  paths: string[];
+  /** Canonical identities contributed only by authoritative sidecar entries. */
+  declarationHashes: Hash[];
+  /** False when a runner-only incremental closure could not be derived. */
+  complete: boolean;
+}
+
+interface DeclaredInputRoot {
+  path: string;
+  /** Present only for the phase definition; explicit references stay inline-declared. */
+  phase?: string;
+}
+
+type StepMode =
+  | { mode: 'ordinary' }
+  | { mode: 'reuse'; bytes: Buffer }
+  | { mode: 'update'; priorInput: string; diff: string | null };
+
+interface HostTarget {
+  path: string;
+  protectedInputs?: readonly string[];
+  allowVerifierOutput?: boolean;
+  /** False when the existing emitter already degrades this output to a diagnostic. */
+  required?: boolean;
+}
+
+type CompletionTargetGuard = (path: string) => Promise<void>;
+
+type CompleteRun = (
+  result: SlcResult,
+  guardTarget: CompletionTargetGuard,
+  pinFile: PinFile | undefined,
+) => Promise<SlcResult>;
+
+interface ExecuteStepsOptions {
+  incremental?: IncrementalRun;
+  hostTargets?: readonly HostTarget[];
+  complete?: CompleteRun;
+}
+
+/** Resolves the built-in pipeline-agnostic normalize definition (DR-013). */
+export function normalizeDefinitionPath(): string {
+  return fileURLToPath(new URL('./normalize.md', import.meta.url));
+}
+
+/**
+ * Builds the ordered compile steps for a full run: an optional generic
+ * normalize step ahead of the entry phase (`--normalize`), each chain phase,
+ * and — with `-O` — the pipeline's pass phases spliced in after the phase
+ * producing their format (DR-013). With passes active on a format, the
+ * producing phase writes the `.raw` intermediate and the final pass lands on
+ * the planned path, so downstream phases and verification see the canonical
+ * artifact regardless of optimization.
+ */
+function buildCompileSteps(opts: {
+  pipeline: Pipeline;
+  plan: readonly { phase: Phase; path: string }[];
+  source: string;
+  artDir: string;
+  basename: string;
+  optimize: boolean;
+  normalize: boolean;
+  /** False inside the reserved `slc` meta-pipeline, which has its own gate (DR-029). */
+  sourceFidelity: boolean;
+  /** Concrete generated-artifact target, never a compiler phase pin. */
+  linkTarget?: string;
+  signal?: AbortSignal;
+  coverage?: CoverageBudget;
+}): PhaseStep[] {
+  const { pipeline, plan, artDir, basename } = opts;
+  const steps: PhaseStep[] = [];
+  let previous = opts.source;
+
+  if (opts.normalize) {
+    const entry = pipeline.phases[0];
+    const normalized = join(
+      artDir,
+      `${basename}.${entry.source.format}${entry.source.ext}`,
+    );
+    const gearsContract =
+      entry.source.format === 'gears'
+        ? () => gearsContractFindings(normalized)
+        : undefined;
+    // The raw input is the first text that may declare the entry phase's
+    // roles, so a malformed one stops the run before normalization (DR-056).
+    const rawSource = previous;
+    const sourceRoles =
+      opts.sourceFidelity &&
+      entry.source.format === 'text' &&
+      entry.target.format === 'gears'
+        ? () => sourceRoleFindings(rawSource)
+        : undefined;
+    steps.push({
+      request: {
+        kind: 'compile',
+        definitionPath: normalizeDefinitionPath(),
+        source: previous,
+        target: normalized,
+        references: [phaseDefinition(pipeline, entry.name)],
+        ...(gearsContract === undefined
+          ? {}
+          : { mechanicalReview: gearsContract }),
+      },
+      phase: 'normalize',
+      targetExt: entry.source.ext,
+      ...(gearsContract === undefined
+        ? {}
+        : { compileFidelity: gearsContract }),
+      ...(sourceRoles === undefined ? {} : { sourceRoles }),
+    });
+    previous = normalized;
+  }
+
+  for (const artifact of plan) {
+    const phase = artifact.phase;
+    const passes = opts.optimize
+      ? pipeline.passes.filter(
+          (pass) => pass.source.format === phase.target.format,
+        )
+      : [];
+    if (passes.length === 0) {
+      steps.push(
+        compileStep(
+          pipeline,
+          phase,
+          previous,
+          artifact.path,
+          opts.sourceFidelity,
+          opts.linkTarget,
+          opts.signal,
+          opts.coverage,
+        ),
+      );
+      previous = artifact.path;
+      continue;
+    }
+    const raw = join(
+      artDir,
+      `${basename}.${phase.target.format}.raw${phase.target.ext}`,
+    );
+    steps.push(
+      compileStep(
+        pipeline,
+        phase,
+        previous,
+        raw,
+        opts.sourceFidelity,
+        opts.linkTarget,
+        opts.signal,
+        opts.coverage,
+      ),
+    );
+    previous = raw;
+    passes.forEach((pass, index) => {
+      const target =
+        index === passes.length - 1
+          ? artifact.path
+          : join(
+              artDir,
+              `${basename}.${phase.target.format}.opt${index + 1}${phase.target.ext}`,
+            );
+      steps.push(
+        compileStep(
+          pipeline,
+          pass,
+          previous,
+          target,
+          opts.sourceFidelity,
+          opts.linkTarget,
+          opts.signal,
+          opts.coverage,
+        ),
+      );
+      previous = target;
+    });
+  }
+  return steps;
+}
+
+function compileStep(
+  pipeline: Pipeline,
+  phase: Phase,
+  source: string,
+  target: string,
+  sourceFidelity: boolean,
+  linkTarget?: string,
+  signal?: AbortSignal,
+  coverage?: CoverageBudget,
+): PhaseStep {
+  // Only a text-to-GEARS phase conserves authored Source fragments, and the
+  // reserved meta-pipeline compiles definitions under its own fidelity gate
+  // (DR-029, phase-execution-51, verification-23).
+  const gated =
+    sourceFidelity &&
+    phase.source.format === 'text' &&
+    phase.target.format === 'gears';
+  const fsmConformance =
+    phase.source.format === 'gears' && phase.target.format === 'fsm'
+      ? () =>
+          isolatedCheck('fsm', [source, target, linkTarget, coverage], signal)
+      : undefined;
+  const checks: MechanicalReview[] = [
+    ...(gated ? [() => sourceFidelityFindings(source, target)] : []),
+    ...(phase.target.format === 'gears'
+      ? [() => gearsContractFindings(target)]
+      : []),
+    ...(fsmConformance === undefined ? [] : [fsmConformance]),
+  ];
+  const mechanicalReview =
+    checks.length === 0
+      ? undefined
+      : async () => (await Promise.all(checks.map((check) => check()))).flat();
+  return {
+    request: {
+      kind: 'compile',
+      definitionPath: phaseDefinition(pipeline, phase.name),
+      source,
+      target,
+      ...(mechanicalReview === undefined ? {} : { mechanicalReview }),
+    },
+    ...(phase.target.format === 'fsm'
+      ? {
+          outputContract: async () =>
+            compilerCheckInstruction('fsm', [
+              source,
+              target,
+              ...(linkTarget ? [linkTarget] : []),
+            ]),
+        }
+      : {}),
+    phase: phase.name,
+    pinKey: phase.name,
+    targetExt: phase.target.ext,
+    ...(mechanicalReview === undefined
+      ? {}
+      : { compileFidelity: mechanicalReview }),
+    ...(phase.source.format === 'gears'
+      ? { gearsSourceContract: () => gearsContractFindings(source) }
+      : {}),
+    ...(gated ? { sourceRoles: () => sourceRoleFindings(source) } : {}),
+    ...(phase.source.format === 'fsm' && phase.source.ext === '.ts'
+      ? { fsmSourceTypecheck: () => checkFsmTypeScript(source, signal) }
+      : {}),
+    ...(phase.source.format === 'fsm'
+      ? {
+          fsmSourceContinuation: () =>
+            isolatedCheck(
+              'continuation',
+              [source, linkTarget, coverage],
+              signal,
+            ),
+        }
+      : {}),
+  };
+}
+
+/** Parser-only findings belong to the phase that can still edit the GEARS. */
+async function gearsContractFindings(path: string): Promise<readonly string[]> {
+  try {
+    const gears = await readFile(path, 'utf8');
+    return [
+      ...checkGearsResultContract(gears),
+      ...checkGearsActorContract(gears),
+      ...checkGearsPackageContract(gears),
+    ];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    return [`GEARS contract could not be checked: ${messageOf(error)}`];
+  }
+}
+
+/**
+ * The DR-056 boundary over the Source a text-to-GEARS phase, or the
+ * normalization ahead of it, reads (phase-execution-69, verification-54). An
+ * unreadable Source is left to the step that reads it.
+ */
+async function sourceRoleFindings(source: string): Promise<readonly string[]> {
+  let sourceText: string;
+  try {
+    sourceText = await readFile(source, 'utf8');
+  } catch {
+    return [];
+  }
+  return checkSourceRoles(sourceText);
+}
+
+/**
+ * The DR-029 gate over one text-to-GEARS phase's live target: the deterministic
+ * conservation findings against the Source that phase reads (phase-execution-51,
+ * verification-25). An artifact that is not there yet leaves the verdict to the
+ * generic target check, and a malformed Source is itself a finding, so the gate
+ * never throws into the executor it guards.
+ */
+async function sourceFidelityFindings(
+  source: string,
+  target: string,
+): Promise<readonly string[]> {
+  let sourceText: string;
+  let gearsText: string;
+  try {
+    [sourceText, gearsText] = await Promise.all([
+      readFile(source, 'utf8'),
+      readFile(target, 'utf8'),
+    ]);
+  } catch {
+    // An artifact the performing call has not written is the generic target
+    // check's business (phase-execution-4), not a conservation finding.
+    return [];
+  }
+  try {
+    const findings = [
+      ...checkSourceGearsContract(sourceText, gearsText),
+      ...checkSourceReturnContracts(sourceText, gearsText),
+    ];
+    await auditEvent('source-gears-check', {
+      source,
+      target,
+      sourceDigest: hashBytes(Buffer.from(sourceText)),
+      targetDigest: hashBytes(Buffer.from(gearsText)),
+      method:
+        'deterministic authored fragments and explicit terminal-return spans',
+      findings,
+    });
+    return findings;
+  } catch (error) {
+    return [`Source fidelity could not be checked: ${messageOf(error)}`];
+  }
+}
+
+/** Reuses the emitted GEARS-to-FSM suite before accepting its input (DR-033). */
+export async function fsmConformanceFindings(
+  source: string,
+  target: string,
+  linkTarget?: string,
+  signal?: AbortSignal,
+  coverage?: CoverageBudget,
+): Promise<readonly string[]> {
+  signal?.throwIfAborted();
+  try {
+    await stat(target);
+  } catch (error) {
+    // Absence belongs to the generic target check; all other failures are
+    // actionable findings rather than permission to skip the gate.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    return [`FSM conformance could not be checked: ${messageOf(error)}`];
+  }
+  try {
+    const [gears, fsm] = await Promise.all([
+      readFile(source, 'utf8'),
+      loadFsmModule(target),
+    ]);
+    const config = findMachineConfig(fsm);
+    const schema = await fsmSchema(config, linkTarget);
+    const findings = [
+      ...schema.findings,
+      ...(schema.artifactSchema === undefined || schema.findings.length > 0
+        ? []
+        : checkFsmContinuationInputs(config, schema.artifactSchema)),
+    ];
+    signal?.throwIfAborted();
+    return findings.length > 0
+      ? findings
+      : await checkGearsFsmArtifact(gears, fsm, {
+          coverage,
+          sourceText: await readFile(target, 'utf8'),
+          ...(schema.artifactSchema === undefined
+            ? {}
+            : { artifactSchema: schema.artifactSchema }),
+          signal,
+        });
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof FsmCoverageDeadlineError) throw error;
+    return [`FSM conformance could not be checked: ${messageOf(error)}`];
+  }
+}
+
+async function fsmSchema(config: MachineConfigLike, linkTarget?: string) {
+  const provenance =
+    linkTarget === undefined
+      ? undefined
+      : await playbookProvenanceForLinkTarget(linkTarget);
+  const runtimeDeclaration =
+    linkTarget === undefined ||
+    artifactSchemaForPlaybookProvenance(provenance) !== undefined
+      ? undefined
+      : await linkTargetRuntimeDeclaration(linkTarget);
+  return resolveArtifactSchemaForVerification({
+    requireContinuationSchema: false,
+    config,
+    ...(provenance === undefined ? {} : { provenance }),
+    ...(runtimeDeclaration === undefined ? {} : { runtimeDeclaration }),
+  });
+}
+
+export async function fsmContinuationFindings(
+  source: string,
+  linkTarget?: string,
+  signal?: AbortSignal,
+  coverage?: CoverageBudget,
+): Promise<readonly string[]> {
+  signal?.throwIfAborted();
+  const fsm = await loadFsmModule(source);
+  const config = findMachineConfig(fsm);
+  const schema = await fsmSchema(config, linkTarget);
+  signal?.throwIfAborted();
+  const findings = [
+    ...schema.findings,
+    ...checkFsmChildSuspension(config),
+    ...(schema.artifactSchema === undefined || schema.findings.length > 0
+      ? []
+      : checkFsmContinuationInputs(config, schema.artifactSchema)),
+  ];
+  return findings.length > 0
+    ? findings
+    : await checkFsmCoverage(fsm, {
+        coverage,
+        sourceText: await readFile(source, 'utf8'),
+        ...(schema.artifactSchema === undefined
+          ? {}
+          : { artifactSchema: schema.artifactSchema }),
+        signal,
+      });
+}
+
+/**
+ * Builds one link step, gated by DR-030 when the link emits Playbook's
+ * `playbook` module over exactly the one FSM object the checks read
+ * (phase-execution-53). Any other link — another linked format, or an object
+ * set the checks cannot address — carries no gate.
+ */
+function linkStep(opts: {
+  link: LinkPhase;
+  definitionPath: string;
+  objects: string[];
+  linkTarget: string;
+  options: readonly LinkOptionPair[];
+  linked: string;
+  signal?: AbortSignal;
+  coverage?: CoverageBudget;
+  entryGearsPath?: string;
+}): PhaseStep {
+  const { link } = opts;
+  const fsmObjects = opts.objects.filter((object) =>
+    object.endsWith(`.${link.source.format}${link.source.ext}`),
+  );
+  const entryRequired = async (): Promise<boolean> =>
+    opts.entryGearsPath !== undefined &&
+    inspectGearsRoleContract(await readFile(opts.entryGearsPath, 'utf8'))
+      .generation === 'schema-3';
+  const gated =
+    link.target.format === PLAYBOOK_LINKED_FORMAT && fsmObjects.length === 1
+      ? async () =>
+          isolatedCheck(
+            'linked',
+            [opts.linked, fsmObjects[0], await entryRequired()],
+            opts.signal,
+          )
+      : undefined;
+  return {
+    request: {
+      kind: 'link',
+      definitionPath: opts.definitionPath,
+      objects: opts.objects,
+      linkTarget: opts.linkTarget,
+      options: [...opts.options],
+      linked: opts.linked,
+      ...(gated === undefined ? {} : { mechanicalReview: gated }),
+    },
+    ...(gated !== undefined && opts.entryGearsPath !== undefined
+      ? {
+          outputContract: async () =>
+            [
+              (await entryRequired()) ? ENTRY_OPTIONS_CONTRACT : '',
+              compilerCheckInstruction('link', [opts.linked, fsmObjects[0]]),
+            ].join('\n'),
+        }
+      : {}),
+    phase: 'link',
+    pinKey: 'link',
+    targetExt: link.target.ext,
+    ...(gated === undefined ? {} : { linkFidelity: gated }),
+    ...(gated !== undefined &&
+    link.source.format === 'fsm' &&
+    link.source.ext === '.ts'
+      ? {
+          fsmSourceTypecheck: () =>
+            checkFsmTypeScript(fsmObjects[0], opts.signal),
+        }
+      : {}),
+    ...(gated !== undefined && link.source.format === 'fsm'
+      ? {
+          fsmSourceContinuation: () =>
+            isolatedCheck(
+              'continuation',
+              [fsmObjects[0], opts.linkTarget, opts.coverage],
+              opts.signal,
+            ),
+        }
+      : {}),
+  };
+}
+
+/**
+ * The DR-030 gate over one link phase's live linked module: the deterministic
+ * prompt-contract findings against the FSM object it links (phase-execution-53,
+ * verification-27). The checks never throw on an absent or unloadable module,
+ * and an unexpected failure becomes a finding, so the gate never throws into
+ * the executor it guards.
+ */
+
+/**
+ * Runs steps in order, selecting interpreted or compiled execution per phase from
+ * the pin index and stopping at the first failure with its report (phase-execution-9,
+ * phase-execution-27). An unparseable pin file fails the run closed before any phase.
+ */
+async function executeSteps(
+  steps: readonly PhaseStep[],
+  pipeline: Pipeline,
+  deps: SlcDeps,
+  opts: ExecuteStepsOptions = {},
+): Promise<SlcResult> {
+  const complete = opts.complete ?? (async (result: SlcResult) => result);
+  const pinInputs = new Set<string>([
+    join(pipeline.dir, PINS_FILE),
+    join(pipeline.dir, PIN_INPUTS_FILE),
+  ]);
+  let pinFile: PinFile | undefined;
+  try {
+    pinFile = (await loadPinFile(pipeline.dir)).file;
+    if (pinFile !== undefined) {
+      const verdicts = await evaluatePinFile(pipeline.dir, pinFile, {
+        observePath: (path) => pinInputs.add(resolve(path)),
+      });
+      const malformed = Object.entries(verdicts).find(
+        ([, verdict]) => verdict.status === 'malformed',
+      );
+      if (malformed !== undefined) {
+        return {
+          ok: false,
+          outputs: [],
+          diagnostics: [
+            `pin is malformed: ${
+              malformed[1].status === 'malformed'
+                ? malformed[1].reason
+                : 'invalid pin index'
+            }`,
+          ],
+        };
+      }
+    }
+  } catch (error) {
+    if (error instanceof PinError) {
+      return { ok: false, outputs: [], diagnostics: [error.message] };
+    }
+    throw error;
+  }
+
+  const definitions = [
+    ...new Set([
+      ...chainDefinitions(pipeline),
+      ...steps.map((step) => step.request.definitionPath),
+    ]),
+  ];
+  const outputs: string[] = [];
+  const diagnostics: string[] = [];
+  const state =
+    opts.incremental === undefined
+      ? undefined
+      : await loadIncremental(opts.incremental);
+  const invalidatedTargetDirs = new Set<string>();
+  const targets = steps.map(stepTarget);
+  const declaredByStep = await Promise.all(
+    steps.map((step) => stepDeclaredInputs(step, pipeline, pinFile)),
+  );
+  const declaredInputs = [
+    ...new Set(declaredByStep.flatMap((declared) => declared.paths)),
+  ];
+  const immutableInputs = externalInputPaths(steps);
+  const hostInputs = (opts.hostTargets ?? []).flatMap(
+    (target) => target.protectedInputs ?? [],
+  );
+  const protectedInputs = [
+    ...new Set([
+      ...immutableInputs,
+      ...definitions,
+      ...declaredInputs,
+      ...hostInputs,
+      ...pinInputs,
+    ]),
+  ];
+  const plannedTargets = opts.hostTargets ?? [];
+  for (let index = 0; index < plannedTargets.length; index++) {
+    const planned = plannedTargets[index];
+    try {
+      await assertSafeTarget(
+        planned.path,
+        [
+          ...protectedInputs,
+          ...targets,
+          ...(planned.protectedInputs ?? []),
+          ...plannedTargets
+            .filter((_, candidate) => candidate !== index)
+            .map((candidate) => candidate.path),
+        ],
+        { allowVerifierOutput: planned.allowVerifierOutput },
+      );
+    } catch (error) {
+      if (planned.required !== false) return failure(messageOf(error));
+    }
+  }
+
+  const hostTargets = new Map(
+    (opts.hostTargets ?? []).map((target) => [resolve(target.path), target]),
+  );
+  const guardCompletionTarget: CompletionTargetGuard = async (path) => {
+    const planned = hostTargets.get(resolve(path));
+    if (planned === undefined) {
+      throw new Error(`unplanned deterministic output: ${path}`);
+    }
+    await assertSafeTarget(
+      planned.path,
+      [...protectedInputs, ...targets, ...(planned.protectedInputs ?? [])],
+      { allowVerifierOutput: planned.allowVerifierOutput },
+    );
+  };
+
+  /**
+   * The failure result of an eligible run, carrying the salvage hint: a failed
+   * run publishes no build but keeps every accepted live target, so the
+   * diagnostics name them and the single-phase invocation that continues from
+   * the last one (DR-021, incremental-compilation-6).
+   */
+  const stopped = (failedIndex: number): SlcResult => ({
+    ok: false,
+    outputs,
+    diagnostics:
+      state === undefined || state.accepted.length === 0
+        ? diagnostics
+        : [
+            ...diagnostics,
+            ...state.accepted.map(
+              (accepted) =>
+                `accepted phase "${accepted.step.phase}" left its live target at ${accepted.target}`,
+            ),
+            `resume from the last accepted target with: ${resumeCommand(
+              state.pipelineName,
+              steps[failedIndex],
+              state.accepted[state.accepted.length - 1].target,
+              pipeline.passes,
+            )}`,
+          ],
+  });
+
+  for (let index = 0; index < steps.length; index++) {
+    const step = steps[index];
+    const target = targets[index];
+
+    const stepDeclared = declaredByStep[index];
+    const identity =
+      state === undefined
+        ? null
+        : await stepIdentity(
+            step,
+            state,
+            index,
+            stepDeclared.complete ? stepDeclared : null,
+          );
+    const mode =
+      state === undefined
+        ? ({ mode: 'ordinary' } as const)
+        : await selectStepMode(step, index, target, identity, state);
+
+    // Reuse still honors pin currency, but it constructs no executor because
+    // no phase runs. A stale/malformed pin can never be bypassed by history.
+    if (mode.mode === 'reuse') {
+      if (state === undefined) {
+        throw new Error('internal error: reuse selected without history state');
+      }
+      let reasons: string[] | null;
+      try {
+        reasons = await reusePinFailure(step, pipeline.dir, pinFile);
+      } catch (error) {
+        reasons = [messageOf(error)];
+      }
+      if (reasons !== null) {
+        const startedAt = Date.now();
+        deps.progress?.({ kind: 'phase-start', phase: step.phase, target });
+        deps.progress?.({
+          kind: 'phase-fail',
+          phase: step.phase,
+          target,
+          elapsedMs: Date.now() - startedAt,
+        });
+        diagnostics.push(
+          formatFailureReport({ phase: step.phase, target, reasons }),
+        );
+        return stopped(index);
+      }
+      if (deps.revalidateReuse) {
+        const checks = [
+          step.sourceRoles,
+          step.gearsSourceContract,
+          step.fsmSourceTypecheck,
+          step.fsmSourceContinuation,
+          step.compileFidelity,
+          step.linkFidelity,
+        ].filter((check): check is MechanicalReview => check !== undefined);
+        const checkProtected = await watchProtectedPaths(protectedInputs);
+        let findings: readonly string[] = [];
+        for (const check of checks) {
+          findings = await check();
+          if (findings.length) break;
+        }
+        findings = [...findings, ...(await checkProtected())];
+        if (findings.length) {
+          diagnostics.push(
+            formatFailureReport({
+              phase: step.phase,
+              target,
+              reasons: [
+                'retained artifact revalidation failed; review findings or run --rebuild to regenerate',
+                ...findings,
+              ],
+            }),
+          );
+          return stopped(index);
+        }
+      }
+      deps.progress?.({
+        kind: 'status',
+        text: `reusing ${step.phase} → ${target}`,
+      });
+      state.accepted.push({
+        step,
+        target,
+        inputs: identity?.inputs ?? null,
+        output: hashBytes(mode.bytes),
+      });
+      continue;
+    }
+
+    // In-run progress (DR-019, cli-32): announce the phase, then report its
+    // outcome with the elapsed time.
+    const startedAt = Date.now();
+    deps.progress?.({ kind: 'phase-start', phase: step.phase, target });
+    const fail = (): void =>
+      deps.progress?.({
+        kind: 'phase-fail',
+        phase: step.phase,
+        target,
+        elapsedMs: Date.now() - startedAt,
+      });
+
+    let request: ExecuteRequest =
+      mode.mode === 'update' && step.request.kind === 'compile'
+        ? {
+            ...step.request,
+            update: { priorInput: mode.priorInput, diff: mode.diff },
+          }
+        : step.request;
+    if (step.outputContract !== undefined) {
+      const outputContract = await step.outputContract();
+      if (outputContract !== undefined)
+        request = { ...request, outputContract };
+    }
+
+    // A malformed Source role is the author's to fix: refuse it before any
+    // execution strategy or agent runs (DR-056, phase-execution-69).
+    if (step.sourceRoles !== undefined && step.request.kind === 'compile') {
+      const findings = await step.sourceRoles();
+      if (findings.length > 0) {
+        fail();
+        diagnostics.push(
+          formatFailureReport({
+            phase: step.phase,
+            target,
+            reasons: [`invalid Source: ${step.request.source}`, ...findings],
+          }),
+        );
+        return stopped(index);
+      }
+    }
+
+    // The consumer cannot repair its protected source. Reject these existing
+    // parser findings before selecting or constructing any execution strategy.
+    if (step.gearsSourceContract !== undefined) {
+      const findings = await step.gearsSourceContract();
+      if (findings.length > 0 && step.request.kind === 'compile') {
+        fail();
+        diagnostics.push(
+          formatFailureReport({
+            phase: step.phase,
+            target,
+            reasons: [
+              `invalid GEARS source: ${step.request.source}`,
+              ...findings,
+            ],
+          }),
+        );
+        return stopped(index);
+      }
+    }
+
+    for (const [check, name] of [
+      [step.fsmSourceTypecheck, 'TypeScript'],
+      [step.fsmSourceContinuation, 'continuation'],
+    ] as const) {
+      if (check === undefined) continue;
+      let reasons: string[] = [];
+      let checkProtectedPaths: (() => Promise<string[]>) | undefined;
+      try {
+        if (name === 'continuation') {
+          checkProtectedPaths = await watchProtectedPaths(
+            phaseProtectedPaths(request, {
+              definitions,
+              protectedInputs: [...immutableInputs, ...stepDeclared.paths],
+            }),
+          );
+        }
+        const findings = await check();
+        if (findings.length > 0) reasons = ['invalid FSM source', ...findings];
+      } catch (error) {
+        reasons = [`FSM ${name} check could not run: ${messageOf(error)}`];
+      }
+      // Module imports can execute code even when the later probe fails or
+      // throws. Their mutations outrank every checker outcome, before selection.
+      const changes = await checkProtectedPaths?.();
+      if (changes !== undefined && changes.length > 0) reasons = changes;
+      if (reasons.length > 0) {
+        fail();
+        diagnostics.push(
+          formatFailureReport({
+            phase: step.phase,
+            target,
+            reasons,
+          }),
+        );
+        return stopped(index);
+      }
+    }
+
+    // Selecting a compiled executor can throw rather than return a verdict —
+    // notably a pinned link target whose installed engine declares no
+    // supported contract, which the host factory rejects (phase-execution-30).
+    // That is the same fail-closed family as a stale pin,
+    // so it is reported through the phase-failure path; letting it unwind
+    // would strand the phase-start line with no terminal event and drop the
+    // phase and target from the report (cli-4, cli-32, phase-execution-27).
+    let selection: Strategy;
+    try {
+      selection = await selectExecutor(step, pipeline.dir, pinFile, deps);
+    } catch (error) {
+      selection = { kind: 'fail', reasons: [messageOf(error)] };
+    }
+    if (selection.kind === 'fail') {
+      fail();
+      diagnostics.push(
+        formatFailureReport({
+          phase: step.phase,
+          target,
+          reasons: selection.reasons,
+        }),
+      );
+      return stopped(index);
+    }
+
+    if (mode.mode === 'update') {
+      deps.progress?.({
+        kind: 'status',
+        text: `updating ${step.phase} → ${target}`,
+      });
+    }
+    const result = await runPhase({
+      request,
+      phase: step.phase,
+      targetExt: step.targetExt,
+      executor: selection.executor,
+      definitions,
+      // Original invocation inputs remain immutable even when a later phase
+      // reads an intermediate and asks the author to clarify that original.
+      protectedInputs: [...immutableInputs, ...stepDeclared.paths],
+      aliasInputs: [
+        ...immutableInputs,
+        ...declaredInputs,
+        ...hostInputs,
+        ...pinInputs,
+        ...targets.filter((_, candidate) => candidate !== index),
+      ],
+      beforeExecute: () =>
+        invalidateForExecution(state, target, invalidatedTargetDirs),
+      revalidate: () => revalidateChain(pipeline.dir),
+      signal: deps.signal,
+    });
+    if (!result.ok) {
+      fail();
+      if (result.clarification !== undefined) {
+        return {
+          ok: false,
+          outputs,
+          diagnostics,
+          outcome: 'clarification-required',
+          clarification: {
+            schema: 'sublang.slc.clarification.v1',
+            phase: step.phase,
+            target,
+            sources: [],
+            questions: result.clarification,
+          },
+        };
+      }
+      diagnostics.push(formatFailureReport(result.report));
+      return stopped(index);
+    }
+    diagnostics.push(...result.diagnostics);
+    // Recheck even custom executors that do not consume mechanicalReview.
+    // runPhase has already enforced the unchanged generic protection checks.
+    if (step.compileFidelity !== undefined) {
+      let findings: readonly string[];
+      let checkProtectedPaths: (() => Promise<string[]>) | undefined;
+      try {
+        checkProtectedPaths = await watchProtectedPaths(
+          phaseProtectedPaths(request, {
+            definitions,
+            protectedInputs: [...immutableInputs, ...stepDeclared.paths],
+          }),
+        );
+        findings = await step.compileFidelity();
+      } catch (error) {
+        findings = [`mechanical review could not run: ${messageOf(error)}`];
+      }
+      // Coverage executes artifact guards/actions after generic acceptance.
+      // Their protected-input mutations outrank success, findings and errors.
+      const changes = await checkProtectedPaths?.();
+      if (changes !== undefined && changes.length > 0) findings = changes;
+      if (findings.length > 0) {
+        fail();
+        diagnostics.push(
+          formatFailureReport({
+            phase: step.phase,
+            target,
+            reasons: [...findings],
+          }),
+        );
+        return stopped(index);
+      }
+    }
+    // Settle an agent-chosen `.js`/`.ts` link-object edge from the sibling that
+    // currently exists (pipeline-40), then keep rejecting every genuinely
+    // unresolved import (verification-18).
+    if (
+      step.phase === 'link' &&
+      (step.targetExt === '.ts' || step.targetExt === '.js')
+    ) {
+      let missing: string[];
+      try {
+        const linked =
+          step.request.kind === 'link' ? step.request.linked : target;
+        const rewrites = await reconcileLinkObjectImportSpecifiers(
+          linked,
+          step.request.kind === 'link' ? step.request.objects : [],
+        );
+        diagnostics.push(
+          ...rewrites.map(
+            ({ from, to }) =>
+              `linked module ${linked} reconciled link-object import ` +
+              `${JSON.stringify(from)} to ${JSON.stringify(to)} (pipeline-40)`,
+          ),
+        );
+        missing = await unresolvableRelativeImports(linked);
+      } catch (error) {
+        // A target that cannot be reconciled and checked is a dead artifact
+        // too. Fail the link here so every started phase still reaches a
+        // terminal event (cli-32).
+        fail();
+        diagnostics.push(
+          `linked module ${target} could not be settled and checked: ` +
+            `${messageOf(error)} — ` +
+            'post-link completion and load integrity are mandatory ' +
+            '(pipeline-40, verification-18)',
+        );
+        return stopped(index);
+      }
+      if (missing.length > 0) {
+        fail();
+        diagnostics.push(
+          `linked module ${target} has unresolvable relative imports: ` +
+            `${missing.join(', ')} — an emitted module that cannot load ` +
+            'fails the link (verification-18)',
+        );
+        return stopped(index);
+      }
+    }
+
+    // The DR-030 gate on the accepted result, after post-link settlement has
+    // put the module in its final loadable form: a reviewed loop already
+    // relayed its findings to the Coder for repair, so a finding surviving to
+    // here is an unreviewed — or unrepaired — link-fidelity break and fails the
+    // phase closed (phase-execution-53).
+    if (step.linkFidelity !== undefined) {
+      const findings = await step.linkFidelity();
+      if (findings.length > 0) {
+        fail();
+        diagnostics.push(
+          formatFailureReport({
+            phase: step.phase,
+            target,
+            reasons: [...findings],
+          }),
+        );
+        return stopped(index);
+      }
+    }
+
+    deps.progress?.({
+      kind: 'phase-finish',
+      phase: step.phase,
+      target,
+      elapsedMs: Date.now() - startedAt,
+    });
+    outputs.push(target);
+    if (state !== undefined) {
+      let output: Hash | null = null;
+      try {
+        output = hashBytes(await readFile(target));
+      } catch {
+        // A successful compile remains successful when only history capture is
+        // unavailable; final publication reports the advisory diagnostic.
+      }
+      state.executed++;
+      state.accepted.push({
+        step,
+        target,
+        inputs: identity?.inputs ?? null,
+        output,
+      });
+    }
+  }
+
+  const selected: SlcResult = {
+    ok: true,
+    outputs,
+    diagnostics,
+    ...(state !== undefined &&
+    state.executed === 0 &&
+    steps.length > 0 &&
+    state.accepted.length === steps.length
+      ? { outcome: 'up-to-date' as const }
+      : {}),
+  };
+  const candidate = await complete(selected, guardCompletionTarget, pinFile);
+  const completed = deps.finalize ? await deps.finalize(candidate) : candidate;
+  return state === undefined
+    ? completed
+    : publishIncremental(completed, state, steps);
+}
+
+/**
+ * The single-phase invocation that continues a failed eligible run from its last
+ * accepted live target (DR-021, incremental-compilation-6). `next` is the step
+ * the run stopped at, so a stopped link step resumes through the direct-link
+ * form with that target as its object.
+ */
+function resumeCommand(
+  pipelineName: string,
+  next: PhaseStep,
+  lastTarget: string,
+  passes: readonly Phase[],
+): string {
+  const operands =
+    next.request.kind === 'link'
+      ? [
+          `${pipelineName}.link`,
+          lastTarget,
+          next.request.linkTarget,
+          // The link phase's opaque options are part of the invocation
+          // (pipeline-14); dropping them would resume a different link.
+          ...next.request.options.flatMap((option) => [
+            '--link-option',
+            `${option.name}=${option.value}`,
+          ]),
+        ]
+      : [
+          `${pipelineName}.${next.phase}`,
+          lastTarget,
+          // A standalone pass otherwise writes the `.opt` sibling (pipeline-33);
+          // name the target the stopped run was writing so the resumed pass
+          // lands where its downstream phases read.
+          ...(passes.some((pass) => pass.name === next.phase)
+            ? ['-o', stepTarget(next)]
+            : []),
+        ];
+  return ['slc', ...operands.map(shellOperand)].join(' ');
+}
+
+// An operand the shell would not read back verbatim — a path with a space, say
+// — must be quoted, or the reported line is a different invocation than the one
+// it resumes (pipeline-9, pipeline-12).
+const VERBATIM_OPERAND = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+/** One resume operand, POSIX-quoted only where the shell would reinterpret it. */
+function shellOperand(value: string): string {
+  return VERBATIM_OPERAND.test(value)
+    ? value
+    : `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function stepTarget(step: PhaseStep): string {
+  return step.request.kind === 'compile'
+    ? step.request.target
+    : step.request.linked;
+}
+
+/**
+ * Inputs supplied from outside this schedule. A normal predecessor target may
+ * feed its successor, but source/reference/link operands supplied by the user
+ * remain protected even when they collide with some scheduled output.
+ */
+function externalInputPaths(steps: readonly PhaseStep[]): string[] {
+  const produced = new Set<string>();
+  const external = new Set<string>();
+  for (const step of steps) {
+    if (step.request.kind === 'compile') {
+      const source = resolve(step.request.source);
+      if (!produced.has(source)) external.add(source);
+      for (const reference of step.request.references ?? []) {
+        external.add(resolve(reference));
+      }
+    } else {
+      for (const object of step.request.objects) {
+        const path = resolve(object);
+        if (!produced.has(path)) external.add(path);
+      }
+      external.add(resolve(step.request.linkTarget));
+    }
+    produced.add(resolve(stepTarget(step)));
+  }
+  return [...external];
+}
+
+async function loadIncremental(run: IncrementalRun): Promise<IncrementalState> {
+  const sourceBytes = await readFile(run.source);
+  const active = await loadBuildHistory(run.artDir);
+  const sourceLocator = encodeLocator(run.artDir, run.source);
+  const history =
+    !run.rebuild &&
+    active?.manifest.pipeline === run.pipelineName &&
+    active.manifest.source.path === sourceLocator
+      ? active
+      : null;
+  return {
+    ...run,
+    active: active !== null,
+    history,
+    sourceBytes,
+    invalidated: false,
+    executed: 0,
+    accepted: [],
+  };
+}
+
+async function stepIdentity(
+  step: PhaseStep,
+  state: IncrementalState,
+  index: number,
+  declared: DeclaredInputs | null,
+): Promise<StepIdentity | null> {
+  if (declared === null) return null;
+  try {
+    if (step.request.kind === 'compile') {
+      const chainedInput =
+        index === 0 ? state.sourceBytes : await readFile(step.request.source);
+      const roots = [
+        step.request.definitionPath,
+        ...(step.request.references ?? []),
+      ];
+      const rootHashes = await Promise.all(
+        roots.map(async (path) => hashBytes(await readFile(path))),
+      );
+      return {
+        chainedInput,
+        inputs: [
+          hashBytes(chainedInput),
+          ...rootHashes,
+          ...declared.declarationHashes,
+          ...(await Promise.all(
+            declared.paths.map(async (path) => hashBytes(await readFile(path))),
+          )),
+        ],
+      };
+    }
+
+    const inputs: Hash[] = [];
+    for (const object of step.request.objects) {
+      const path = resolve(object);
+      inputs.push(
+        framedHash(
+          'object',
+          encodeLocator(state.artDir, path),
+          hashBytes(await readFile(path)),
+        ),
+      );
+    }
+    inputs.push(hashBytes(await readFile(step.request.definitionPath)));
+    inputs.push(...declared.declarationHashes);
+    inputs.push(
+      ...(await Promise.all(
+        declared.paths.map(async (path) => hashBytes(await readFile(path))),
+      )),
+    );
+
+    const linkTarget = resolve(step.request.linkTarget);
+    const targetInfo = await stat(linkTarget);
+    let targetKind: 'file' | 'directory';
+    let targetIdentity: Hash;
+    if (targetInfo.isFile()) {
+      targetKind = 'file';
+      targetIdentity = hashBytes(await readFile(linkTarget));
+    } else if (targetInfo.isDirectory()) {
+      targetKind = 'directory';
+      const identity = await hashTree(linkTarget);
+      if (!isHash(identity)) throw new Error('invalid link-target tree hash');
+      targetIdentity = identity;
+    } else {
+      throw new Error('link target is neither a file nor directory');
+    }
+    inputs.push(
+      framedHash(
+        'link-target',
+        encodeLocator(state.artDir, linkTarget),
+        targetKind,
+        targetIdentity,
+      ),
+    );
+    for (const option of step.request.options) {
+      inputs.push(framedHash('option', option.name, option.value));
+    }
+    return { inputs };
+  } catch {
+    return null;
+  }
+}
+
+async function stepDeclaredInputs(
+  step: PhaseStep,
+  pipeline: Pipeline,
+  pinFile: PinFile | undefined,
+): Promise<DeclaredInputs> {
+  const roots: DeclaredInputRoot[] = [
+    { path: step.request.definitionPath, phase: step.pinKey },
+  ];
+  if (step.request.kind === 'compile') {
+    for (const reference of step.request.references ?? []) {
+      roots.push({ path: reference });
+    }
+  }
+  return declaredInputPaths(pipeline, pinFile, roots);
+}
+
+/** Current local semantic-input closure for definitions and references. */
+async function declaredInputPaths(
+  pipeline: Pipeline,
+  pinFile: PinFile | undefined,
+  roots: readonly DeclaredInputRoot[],
+): Promise<DeclaredInputs> {
+  const boundary = pinFile?.pathBoundary.path ?? '.';
+  const base = new Set(roots.map((root) => resolve(root.path)));
+  const seen = new Set(base);
+  const inputs: string[] = [];
+  const declarationHashes: Hash[] = [];
+  let complete = true;
+  const normalize = resolve(normalizeDefinitionPath());
+  for (const root of roots) {
+    const absolute = resolve(root.path);
+    if (!absolute.toLowerCase().endsWith('.md') || absolute === normalize) {
+      continue;
+    }
+    const locator = relative(pipeline.dir, absolute).split(sep).join('/');
+    let closure: InspectedClosure;
+    try {
+      closure = await inspectClosureWithDeclaration(
+        pipeline.dir,
+        boundary,
+        locator,
+        root.phase,
+      );
+    } catch {
+      // An unexpected inspection failure still degrades runner-only identity
+      // to Ordinary execution; structured PinError outcomes retain safe paths.
+      complete = false;
+      continue;
+    }
+    if (!closure.complete) {
+      // An incomplete closure is unusable for identity, but every independently
+      // resolved in-boundary member remains protected from output aliasing.
+      complete = false;
+      for (const path of closure.paths) {
+        const absolutePath = resolve(path);
+        if (seen.has(absolutePath)) continue;
+        seen.add(absolutePath);
+        inputs.push(absolutePath);
+      }
+      continue;
+    }
+    if (closure.declaration === 'sidecar' && root.phase !== undefined) {
+      const members = [...closure.paths]
+        .map((path) => resolve(path))
+        .filter((path) => path !== absolute)
+        .map((path) => ({
+          path,
+          locator: relative(pipeline.dir, path).split(sep).join('/'),
+        }))
+        .sort((left, right) => compareUtf8(left.locator, right.locator));
+      declarationHashes.push(
+        framedHash(
+          'sidecar-closure-v1',
+          root.phase,
+          ...members.map((member) => member.locator),
+        ),
+      );
+      for (const member of members) {
+        if (seen.has(member.path)) continue;
+        seen.add(member.path);
+        inputs.push(member.path);
+      }
+      continue;
+    }
+    for (const path of closure.paths) {
+      const absolutePath = resolve(path);
+      if (seen.has(absolutePath)) continue;
+      seen.add(absolutePath);
+      inputs.push(absolutePath);
+    }
+  }
+  return { paths: inputs, declarationHashes, complete };
+}
+
+async function selectStepMode(
+  step: PhaseStep,
+  index: number,
+  target: string,
+  identity: StepIdentity | null,
+  state: IncrementalState,
+): Promise<StepMode> {
+  if (state.rebuild || state.history === null || identity === null) {
+    return { mode: 'ordinary' };
+  }
+  const record = state.history.manifest.steps[index];
+  const kind = step.request.kind;
+  if (
+    record === undefined ||
+    record.kind !== kind ||
+    record.name !== step.phase ||
+    record.target !== encodeLocator(state.artDir, resolve(target))
+  ) {
+    return { mode: 'ordinary' };
+  }
+
+  let targetBytes: Buffer;
+  try {
+    targetBytes = await readFile(target);
+  } catch {
+    return { mode: 'ordinary' };
+  }
+  if (sameHashes(record.inputs, identity.inputs)) {
+    return { mode: 'reuse', bytes: targetBytes };
+  }
+  if (step.request.kind !== 'compile' || identity.chainedInput === undefined) {
+    return { mode: 'ordinary' };
+  }
+  const prior = await verifiedInput(state.history, index, record.inputs[0]);
+  if (prior === null) return { mode: 'ordinary' };
+  const diff =
+    record.inputs[0] === identity.inputs[0]
+      ? ''
+      : renderInputDiff(prior.bytes, identity.chainedInput);
+  return { mode: 'update', priorInput: prior.path, diff };
+}
+
+function renderInputDiff(
+  prior: Uint8Array,
+  current: Uint8Array,
+): string | null {
+  try {
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    return unifiedLineDiff(decoder.decode(prior), decoder.decode(current));
+  } catch {
+    return null;
+  }
+}
+
+function framedHash(tag: string, ...fields: string[]): Hash {
+  return hashBytes(Buffer.from(JSON.stringify([tag, ...fields]), 'utf8'));
+}
+
+function sameHashes(left: readonly Hash[], right: readonly Hash[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((hash, index) => hash === right[index])
+  );
+}
+
+async function reusePinFailure(
+  step: PhaseStep,
+  pipelineDir: string,
+  pinFile: PinFile | undefined,
+): Promise<string[] | null> {
+  const record = ownPin(pinFile, step.pinKey);
+  if (
+    pinFile === undefined ||
+    step.pinKey === undefined ||
+    record === undefined
+  ) {
+    return null;
+  }
+  const verdict = await evaluatePin(pipelineDir, pinFile, step.pinKey, record);
+  if (verdict.status !== 'current') {
+    return [`pin is ${verdict.status}: ${verdict.reason}`];
+  }
+  const definitionIssue = await currentPinDefinitionIssue(
+    step,
+    pipelineDir,
+    pinFile,
+    record,
+  );
+  return definitionIssue === null ? null : [definitionIssue];
+}
+
+/**
+ * Keeps external-definition pinning dormant until pipeline discovery selects
+ * the same physical definition (phase-execution-27; DR-026).
+ */
+async function currentPinDefinitionIssue(
+  step: PhaseStep,
+  pipelineDir: string,
+  pinFile: PinFile,
+  record: PinRecord,
+): Promise<string | null> {
+  const recorded = resolvePinPath(
+    pipelineDir,
+    pinFile.pathBoundary.path,
+    record.definition.path,
+    'definition',
+  );
+  const selected = resolve(step.request.definitionPath);
+  if (await pathsAlias(recorded, selected)) return null;
+
+  const selectedLocator = relative(pipelineDir, selected).split(sep).join('/');
+  return (
+    `pin-recorded definition "${record.definition.path}" does not match ` +
+    `selected pipeline definition "${selectedLocator}"; ` +
+    'external-definition execution remains disabled until pipeline resolution selects the same physical definition'
+  );
+}
+
+/**
+ * Removes any complete snapshot that could otherwise bless this target after
+ * executor work. Eligible runs already know their artifact directory; excluded
+ * forms perform only this safety invalidation and never select from or publish
+ * history.
+ */
+async function invalidateForExecution(
+  state: IncrementalState | undefined,
+  target: string,
+  invalidatedTargetDirs: Set<string>,
+): Promise<void> {
+  if (state !== undefined) {
+    if (state.invalidated) return;
+    try {
+      await invalidateBuildHistory(state.artDir, state.active);
+      state.invalidated = true;
+      return;
+    } catch (error) {
+      throw new Error(
+        `active build history could not be invalidated: ${messageOf(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  const targetDir = dirname(resolve(target));
+  if (invalidatedTargetDirs.has(targetDir)) return;
+  const active = await loadBuildHistory(targetDir);
+  const targetLocator = encodeLocator(targetDir, resolve(target));
+  if (
+    active !== null &&
+    active.manifest.steps.some((step) => step.target === targetLocator)
+  ) {
+    try {
+      await invalidateBuildHistory(targetDir, true);
+    } catch (error) {
+      throw new Error(
+        `active build history could not be invalidated: ${messageOf(error)}`,
+        { cause: error },
+      );
+    }
+    invalidatedTargetDirs.add(targetDir);
+  }
+}
+
+async function publishIncremental(
+  result: SlcResult,
+  state: IncrementalState,
+  steps: readonly PhaseStep[],
+): Promise<SlcResult> {
+  if (!result.ok || state.executed === 0) return result;
+  if (
+    state.accepted.length !== steps.length ||
+    state.accepted.some(
+      (entry) => entry.inputs === null || entry.output === null,
+    )
+  ) {
+    return historyDiagnostic(
+      result,
+      'one or more phase identities or output bytes were unavailable',
+    );
+  }
+
+  const records: StepToRecord[] = [];
+  try {
+    for (const accepted of state.accepted) {
+      const bytes = await readFile(accepted.target);
+      if (hashBytes(bytes) !== accepted.output) {
+        return historyDiagnostic(
+          result,
+          `accepted output changed before publication: ${accepted.target}`,
+        );
+      }
+      records.push({
+        kind: accepted.step.request.kind,
+        name: accepted.step.phase,
+        target: accepted.target,
+        inputs: accepted.inputs as Hash[],
+        output: accepted.output as Hash,
+        bytes,
+      });
+    }
+    await recordBuild({
+      artDir: state.artDir,
+      pipeline: state.pipelineName,
+      sourcePath: state.source,
+      sourceBytes: state.sourceBytes,
+      steps: records,
+    });
+    return result;
+  } catch (error) {
+    return historyDiagnostic(result, messageOf(error));
+  }
+}
+
+function historyDiagnostic(result: SlcResult, reason: string): SlcResult {
+  return {
+    ...result,
+    diagnostics: [
+      ...result.diagnostics,
+      `slc: build history not recorded: ${reason}`,
+    ],
+  };
+}
+
+/** An executor to run, or a fail-closed verdict that stops the run (phase-execution-27). */
+type Strategy =
+  | { kind: 'run'; executor: PhaseExecutor }
+  | { kind: 'fail'; reasons: string[] };
+
+/**
+ * Selects a phase's execution strategy from the pin index (phase-execution-27; DR-005,
+ * DR-007): a phase with no pin interprets, a current pin runs its compiled
+ * artifact, and a stale or malformed pin fails closed and is never silently
+ * interpreted.
+ */
+async function selectExecutor(
+  step: PhaseStep,
+  pipelineDir: string,
+  pinFile: PinFile | undefined,
+  deps: SlcDeps,
+): Promise<Strategy> {
+  const record = ownPin(pinFile, step.pinKey);
+  if (
+    pinFile === undefined ||
+    step.pinKey === undefined ||
+    record === undefined
+  ) {
+    return { kind: 'run', executor: deps.executor };
+  }
+
+  const verdict = await evaluatePin(pipelineDir, pinFile, step.pinKey, record);
+  if (verdict.status === 'current') {
+    const definitionIssue = await currentPinDefinitionIssue(
+      step,
+      pipelineDir,
+      pinFile,
+      record,
+    );
+    if (definitionIssue !== null) {
+      return { kind: 'fail', reasons: [definitionIssue] };
+    }
+    if (deps.compiled === undefined) {
+      return {
+        kind: 'fail',
+        reasons: [
+          `phase "${step.phase}" is pinned to a compiled artifact, but this host has no compiled executor configured`,
+        ],
+      };
+    }
+    return {
+      kind: 'run',
+      executor: await deps.compiled({
+        phase: step.pinKey,
+        pipelineDir,
+        record,
+      }),
+    };
+  }
+  return {
+    kind: 'fail',
+    reasons: [`pin is ${verdict.status}: ${verdict.reason}`],
+  };
+}
+
+function ownPin(
+  pinFile: PinFile | undefined,
+  pinKey: string | undefined,
+): PinRecord | undefined {
+  return pinFile !== undefined &&
+    pinKey !== undefined &&
+    Object.hasOwn(pinFile.pins, pinKey)
+    ? pinFile.pins[pinKey]
+    : undefined;
+}
+
+function phaseDefinition(pipeline: Pipeline, name: string): string {
+  return join(pipeline.dir, `${name}.md`);
+}
+
+function chainDefinitions(pipeline: Pipeline): string[] {
+  const definitions = [...pipeline.phases, ...pipeline.passes].map((phase) =>
+    phaseDefinition(pipeline, phase.name),
+  );
+  if (pipeline.linkFile !== null) {
+    definitions.push(pipeline.linkFile);
+  }
+  return definitions;
+}
+
+async function requireLink(
+  pipeline: Pipeline,
+  reference: string,
+): Promise<LinkPhase> {
+  if (pipeline.linkFile === null) {
+    throw new Error(`pipeline "${reference}" has no link phase`);
+  }
+  // `loadLinkFile` relaxes the ## Link Targets requirement intrinsically for
+  // Playbook's `playbook` linked format (DR-002, DR-009, pipeline-11), so the
+  // requirement does not depend on how the pipeline reference resolved.
+  return loadLinkFile(pipeline.linkFile);
+}
+
+async function revalidateChain(dir: string): Promise<void> {
+  await loadPipeline(dir);
+}
+
+function failure(message: string): SlcResult {
+  return { ok: false, outputs: [], diagnostics: [message] };
+}
+
+/** Public compiler boundary with workflow-owned environment and invocation evidence. */
+export async function runSlc(
+  argv: readonly string[],
+  deps: SlcDeps,
+): Promise<SlcResult> {
+  return managedCompilation(argv, deps, runSlcCore);
+}
+
+function compilerCheckInstruction(kind: string, paths: string[]): string {
+  return [
+    'Compiler-owned verification operation (run after writing the target):',
+    (process.platform === 'win32' ? '& ' : '') +
+      [
+        process.execPath,
+        fileURLToPath(new URL('./cli.js', import.meta.url)),
+        'check',
+        kind,
+        ...paths,
+      ]
+        .map(shellArgument)
+        .join(' '),
+    'Use this operation instead of a project or global tsc command. Its toolchain and Node typings are supplied by SLC; do not install dependencies or create a project package.json/tsconfig.',
+    'The compiler reruns this gate. Agent summaries or unavailable alternative checks do not decide acceptance.',
+    'Treat bounded search exhaustion as unverified; public JSON coverageWitnesses may supply legal inputs, never patch private context or weaken guards.',
+  ].join('\n');
+}
+
+/** Shell syntax is selected for the platform, independent of JSON quoting. */
+function shellArgument(value: string): string {
+  return process.platform === 'win32'
+    ? "'" + value.replaceAll("'", "''") + "'"
+    : "'" + value.replaceAll("'", "'\"'\"'") + "'";
+}

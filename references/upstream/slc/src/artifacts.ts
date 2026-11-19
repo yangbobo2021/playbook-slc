@@ -1,0 +1,187 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+/**
+ * Source-name validation and artifact-path computation (DR-001, DR-014).
+ *
+ * Implements pipeline-6 (the entry/non-entry source filename forms, with a
+ * foreign-extension entry source accepted as a raw input), pipeline-7 (compute the
+ * artifact directory under the invocation working directory, reusing it without
+ * nesting), and pipeline-8 (place intermediates and the output, honoring `-o`). See
+ * specs/packages/pipeline.md.
+ */
+
+import { basename as pathBasename, extname, join } from 'node:path';
+
+import type { Phase } from './phase.js';
+
+/** Optional content sink for preparing concrete derived files before writing. */
+export type ArtifactWriter = (path: string, content: string) => Promise<void>;
+
+// The stages a scheduled pass chain writes between the producing phase and the
+// format's canonical artifact (pipeline-32), plus the unnumbered stage a
+// standalone pass writes (pipeline-33).
+const PASS_STAGE = /\.(?:raw|opt\d*)$/;
+
+/** Machine-readable reason a source path was refused. */
+export type SourceErrorCode = 'invalid-source-name';
+
+/** Raised when a source filename matches no applicable form (pipeline-6). */
+export class SourceError extends Error {
+  readonly code: SourceErrorCode;
+
+  constructor(code: SourceErrorCode, message: string) {
+    super(message);
+    this.name = 'SourceError';
+    this.code = code;
+  }
+}
+
+/** A source filename decomposed into its basename, plus the raw-input marker. */
+export interface ParsedSource {
+  /** Basename with any trailing `.<source-format>` and extension stripped. */
+  basename: string;
+  /**
+   * True when an entry source carries a foreign extension: a raw input whose
+   * compilation auto-schedules normalization (DR-014, pipeline-6, pipeline-34).
+   */
+  raw: boolean;
+}
+
+/**
+ * Validates a source path against the consuming phase's source format and
+ * extension, returning its `<basename>` (pipeline-6).
+ *
+ * The non-entry form requires `<basename>.<source-format>.<ext>`; the entry form
+ * also accepts the plain `<basename>.<ext>`, and an entry source with any other
+ * extension is a raw input whose `<basename>` is the name minus its actual
+ * extension (DR-014). A pass reads the staged artifact its scheduled
+ * predecessor wrote, so `staged` additionally accepts the `.raw` and `.opt<k>`
+ * stages pipeline-32 and pipeline-33 name.
+ *
+ * @throws {SourceError} when the name matches no applicable form.
+ */
+export function parseSource(opts: {
+  path: string;
+  sourceFormat: string;
+  ext: string;
+  entry: boolean;
+  /** True for a pass phase, whose source may carry a scheduled stage suffix. */
+  staged?: boolean;
+}): ParsedSource {
+  const { path, sourceFormat, ext, entry, staged } = opts;
+  const name = pathBasename(path);
+
+  if (!name.endsWith(ext)) {
+    if (entry) {
+      const actualExt = extname(name);
+      const basename =
+        actualExt === '' ? name : name.slice(0, -actualExt.length);
+      if (basename.length === 0) {
+        throw new SourceError(
+          'invalid-source-name',
+          `source "${name}" has an empty basename`,
+        );
+      }
+      return { basename, raw: true };
+    }
+    throw new SourceError(
+      'invalid-source-name',
+      `source "${name}" must end with "${ext}"`,
+    );
+  }
+
+  const stem = name.slice(0, name.length - ext.length);
+  const qualifier = `.${sourceFormat}`;
+  // A stage is recognized only after the declared format, never instead of it:
+  // a format named `raw` or `opt<k>` owns its own qualifier, so the canonical
+  // reading wins wherever both would match (pipeline-6).
+  const stage = staged === true ? PASS_STAGE.exec(stem) : null;
+  const stagedStem =
+    stage === null ? undefined : stem.slice(0, stem.length - stage[0].length);
+  let basename: string;
+  if (stem.endsWith(qualifier)) {
+    basename = stem.slice(0, stem.length - qualifier.length);
+  } else if (stagedStem?.endsWith(qualifier) === true) {
+    basename = stagedStem.slice(0, stagedStem.length - qualifier.length);
+  } else if (entry) {
+    basename = stem;
+  } else {
+    throw new SourceError(
+      'invalid-source-name',
+      staged === true
+        ? `source "${name}" must be named "<basename>.${sourceFormat}[.raw|.opt<k>]${ext}"`
+        : `source "${name}" must be named "<basename>.${sourceFormat}${ext}"`,
+    );
+  }
+
+  if (basename.length === 0) {
+    throw new SourceError(
+      'invalid-source-name',
+      `source "${name}" has an empty basename`,
+    );
+  }
+  return { basename, raw: false };
+}
+
+/**
+ * Computes the artifact directory under the invocation working directory,
+ * reusing the working directory itself without nesting when its leaf is
+ * already the canonical `<basename>.<pipeline>` (pipeline-7, DR-014).
+ */
+export function artifactDir(
+  cwd: string,
+  basename: string,
+  pipeline: string,
+): string {
+  const canonicalLeaf = `${basename}.${pipeline}`;
+  if (pathBasename(cwd) === canonicalLeaf) {
+    return cwd;
+  }
+  return join(cwd, canonicalLeaf);
+}
+
+/** Computes the canonical path of a `<basename>.<format>.<ext>` artifact (pipeline-8). */
+export function artifactPath(
+  artDir: string,
+  basename: string,
+  format: string,
+  ext: string,
+): string {
+  return join(artDir, `${basename}.${format}${ext}`);
+}
+
+/** A planned artifact: the phase that writes it, its path, and its pipeline role. */
+export interface ArtifactPlan {
+  phase: Phase;
+  path: string;
+  role: 'intermediate' | 'output';
+}
+
+/**
+ * Plans the target artifact each phase writes: every non-terminal phase writes a
+ * canonical intermediate, and the terminal phase writes the output, overridden by
+ * `output` (`-o`) when provided while intermediates stay canonical (pipeline-8).
+ */
+export function planArtifacts(opts: {
+  phases: readonly Phase[];
+  basename: string;
+  artDir: string;
+  output?: string;
+}): ArtifactPlan[] {
+  const { phases, basename, artDir, output } = opts;
+  return phases.map((phase, index) => {
+    const isTerminal = index === phases.length - 1;
+    const canonical = artifactPath(
+      artDir,
+      basename,
+      phase.target.format,
+      phase.target.ext,
+    );
+    return {
+      phase,
+      role: isTerminal ? 'output' : 'intermediate',
+      path: isTerminal && output !== undefined ? output : canonical,
+    };
+  });
+}
