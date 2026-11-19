@@ -8,6 +8,7 @@
 | 用户请求 | 助手调用 |
 | --- | --- |
 | 安装 SLC 和 Playbook | `python3 <skill>/scripts/workflow_cli.py install` |
+| 只生成 GEARS | `python3 <skill>/scripts/workflow_cli.py gears flow.md` |
 | 只编译描述 | `python3 <skill>/scripts/workflow_cli.py compile flow.md` |
 | 登记指定入口 | `python3 <skill>/scripts/workflow_cli.py register '/实际入口/flow.mjs'` |
 | 运行现有登记 | `python3 <skill>/scripts/workflow_cli.py run /flow 'orders.csv'` |
@@ -17,9 +18,11 @@
 
 SLC 最低为 `0.23.0`，Playbook 最低为 `19.1.0`。缺包时用 npm 全局安装最低支持版本，已装且满足下限的版本直接复用。若结果为 `upgrade-confirmation-required`，向用户说明各包的当前版本和拟升级版本。用户同意后在子命令前传 `--approve-upgrade slc=<旧版本>` 或 `--approve-upgrade playbook=<旧版本>`；同时获准升级两个包时分别传入。
 
-每次编译在项目的 `.playbook-slc/builds/` 下使用独立输出目录，以保留旧登记仍在引用的产物。只将 SLC 回执中实际出现的入口交给登记。结合历史耗时按需传 `--timeout <秒数>`，默认 300 秒。操作按命令结果顺序推进。
+完整编译在 `--cwd` 指定的目录运行 `slc playbook`，省略 `--cwd` 时使用当前目录。SLC 直接写标准产物。以 `flow.md` 为例，入口是 `flow.mjs`，编译产物和 SLC 生成的 `package.json` 放在 `flow.playbook/`。同目录重新编译时，SLC 按本版的规则复用或更新同路径产物。只将 SLC 回执中实际出现的入口交给登记。结合历史耗时按需传 `--timeout <秒数>`，默认 300 秒。
 
-结果为 `conflict` 时，提示原有和拟登记的入口，请用户选择沿用、替换或用新名称登记。记录 `result.token`。拿到决定后，复用 `result.proposed.entry` 或 `stages.compile.entry`，执行 `register <入口> --collision reuse|replace|rename --token <值>`，改名时加 `--name <新名称>`。原请求还包括运行时，用登记结果的 `name` 和 `entry` 执行 `run <名称> <原输入> --expected-entry <入口>`。等待期间先保留原有登记和未完成的请求。登记或产物已变化时，重新核对用户选择。
+`gears` 与完整编译使用同一套宿主、模型和进度选择，只需 SLC。它在 `--cwd` 指定的目录运行 `slc playbook.text2gears`，省略 `--cwd` 时使用当前目录。收到 `gears-generated` 就返回 `result.gears` 指向的 `.gears.md`。例如在目标目录中处理 `flow.md` 时，SLC 的标准输出位置是该目录下的 `flow.playbook/flow.gears.md`。
+
+结果为 `conflict` 时，提示原有和拟登记的入口，请用户选择沿用、替换或用新名称登记。记录 `result.token`。拿到决定后，复用 `result.proposed.entry` 或 `stages.compile.entry`，执行 `register <入口> --collision reuse|replace|rename --token <值>`，改名时加 `--name <新名称>`。原请求还包括运行时，用登记结果的 `name` 和 `entry` 执行 `run <名称> <原输入> --expected-entry <入口>`。等待期间先保留原有登记和未完成的请求。如果两份登记指向同一个路径，说明 SLC 可能已在编译时更新该路径的文件，沿用登记会使用该路径当前的产物。登记或产物已变化时，重新核对用户选择。
 
 工具 JSON 包括 `result`、已完成的 `stages` 和实际 `commands`。`run-returned` 表示 Playbook 返回了一个会话回复，按回复和运行证据再判断完成、待答复或失败。`clarification-required` 时把原始澄清事项交给用户。其他失败按实际阶段和回执进入 [诊断](diagnosis.md)。
 

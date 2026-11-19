@@ -1,6 +1,6 @@
 ---
 name: playbook-slc
-description: 在 Codex 或 Claude Code 中安装 SLC 和 Playbook，从自然语言流程编译工作流，登记生成入口并用业务输入执行已登记工作流。也用于结合原始审计和版本化源码诊断 SLC 编译与 Playbook 启动失败，建议或修补流程及产物并复验。
+description: 在 Codex 或 Claude Code 中安装 SLC 和 Playbook，从自然语言流程单独生成 GEARS 或编译可运行工作流，登记入口并运行已登记工作流。也用于结合原始审计和版本化源码诊断 SLC 编译与 Playbook 启动失败，建议或修补流程及产物并复验。
 ---
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Boboyang -->
@@ -10,6 +10,10 @@ description: 在 Codex 或 Claude Code 中安装 SLC 和 Playbook，从自然语
 ## 使用本机 CLI
 
 用户要求安装工具、编译描述、登记入口或运行已登记工作流时，读取 [CLI 操作](references/workflow-cli.md)，按自然语言请求使用 `scripts/workflow_cli.py` 执行相应步骤。用当前会话的宿主识别 Agent，能确认会话模型可用于 CLI 时沿用，其他情况使用宿主配置。单独的编译请求在返回实际入口后结束。更换已有全局版本和处理同名登记须由用户确认。操作失败时根据实际阶段回执继续诊断。
+
+用户要求「只生成 GEARS」「为 flow.md 生成工作流 GEARS」或指定 `text2gears` 时，使用 `gears` 子命令。用户指定的目标目录是 SLC 的工作目录，传给 `--cwd`。只运行 `slc playbook.text2gears`，返回回执中的 `result.gears` 路径后结束。
+
+完整编译也在 `--cwd` 指定的目录运行 SLC，产物按 SLC 的标准目录结构保存。返回实际生成的入口路径。
 
 在会话里实时转达关键进度。长时间等待时说明已完成什么、还在等什么。超时后分别报告已保留的产物、已核实的业务结果和 CLI 回执状态，按 [进度与超时](references/workflow-cli.md#进度与超时) 核对本次证据。
 

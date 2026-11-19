@@ -29,8 +29,7 @@ async function compilerConfig(host) {
   if (previous && previous !== host) {
     for (const key of ['effort', 'fastMode', 'ultracode', 'subagentModel']) delete config[key];
   }
-  // The compiler writes into a per-run directory. Keep pipeline discovery
-  // anchored to the user's project as with a direct invocation there.
+  // Preserve the project's pipeline search roots when passing a temporary config.
   config.pipelinePath = (config.pipelinePath ?? ['./pipelines']).map(path => resolve(path));
   return { status: 'ready', config };
 }

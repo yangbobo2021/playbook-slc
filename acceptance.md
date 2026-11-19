@@ -74,6 +74,18 @@
 
 两例的历史材料见本地验收目录 `local-results/cli-acceptance-2026-11-19/`。L07 的阶段时间和原始审计索引在 `native/claude/summary.json`，本次执行的外层命令记录在 `claude-events.jsonl`。L08 对照 `native/claude-runtime/retry-workflow-terminal.json` 和同目录的 `retry-CLI-receipt.json`。
 
+### L09 只生成 GEARS
+
+- **输入与步骤**。请求「在指定目录为 `flow.md` 生成工作流 GEARS」。分别用替身模拟 Codex 和 Claude Code，再用真实源码执行一次单阶段生成。
+- **通过条件**。助手自动选中当前宿主，在指定目录只调一次 `slc playbook.text2gears`。从成功回执中核对该目录下 `flow.playbook/flow.gears.md` 的实际路径后结束。单阶段生成只检查所需的 SLC，不继续完整编译、登记或运行。
+- **证据**。宿主和模型选择、实际 CLI 参数、退出码、返回的 GEARS 路径和文件哈希。
+
+### L10 完整编译的输出目录
+
+- **输入与步骤**。把 `flow.md` 的源目录、调用方目录和 `--cwd` 指定的目标目录设为可区分的路径。用替身检查 `compile` 和 `workflow` 传给 SLC 的工作目录，并用本机 SLC 的路径规划和产物环境初始化核对标准结构。
+- **通过条件**。两条入口都在目标目录调用 `slc playbook`。入口为该目录下的 `flow.mjs`，编译产物目录为 `flow.playbook/`，其中包括 SLC 初始化生成的 `package.json`。从回执读取实际入口，编译产物保持在 SLC 写入的位置。
+- **证据**。实际调用参数和工作目录、SLC 计划路径、隔离目录中的初始化文件清单及 `package.json`。
+
 ## 真实端到端验收
 
 使用隔离的 npm 全局前缀、独立的测试项目和登记环境。两种 Agent CLI 均保持可用，分别在真实宿主会话中发起请求。按计划每个宿主做一次真实 SLC 编译，其他真实检查复用本轮生成的入口。开跑前记录编译时间预算。

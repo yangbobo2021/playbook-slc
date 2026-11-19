@@ -47,9 +47,18 @@ elif command == 'slc':
         print('historical failure',file=sys.stderr)
         sys.exit(1)
     if os.environ.get('TEST_MODE') != 'missing-entry':
-        entry = Path.cwd()/'actual entry.mjs'
-        entry.write_text('export default {};')
-        print(entry)
+        if args[2] == 'playbook.text2gears':
+            gears = Path('flow.playbook/flow.gears.md')
+            gears.parent.mkdir(exist_ok=True)
+            gears.write_text('# GEARS')
+            print(gears)
+        else:
+            artifact_dir = Path('flow.playbook')
+            artifact_dir.mkdir(exist_ok=True)
+            (artifact_dir / 'package.json').write_text('{"type":"module"}')
+            entry = Path('flow.mjs')
+            entry.write_text('export default {};')
+            print(entry)
 elif command == 'node':
     req = json.load(sys.stdin)
     if req['operation'] == 'compiler-config':
@@ -158,28 +167,70 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(ready["result"]["tools"]["slc"]["version"], "0.23.0")
         self.assertEqual([c[1] for c in self.calls()], [["root", "-g"], ["install", "-g", "@sublang/slc@0.23.0"]])
 
-    def test_compile_only_returns_actual_entry_and_distinct_build(self):
+    def test_compile_only_returns_the_entry_in_the_selected_working_directory(self):
         self.package("slc", "0.23.0")
-        a = self.cli("--session-model", "gpt-6.2-sol", "compile", self.source)
-        b = self.cli("compile", self.source)
-        self.assertEqual(a["result"]["status"], "compiled")
-        self.assertEqual(Path(a["result"]["entry"]).name, "actual entry.mjs")
-        self.assertNotEqual(a["result"]["entry"], b["result"]["entry"])
+        target = self.root / "target with spaces"
+        target.mkdir()
+        first = self.cli("--cwd", target, "--session-model", "gpt-6.2-sol", "compile", self.source)
+        second = self.cli("--cwd", target, "compile", self.source)
+        for receipt in (first, second):
+            self.assertEqual(receipt["result"]["status"], "compiled")
+            self.assertEqual(Path(receipt["result"]["entry"]), target / "flow.mjs")
+            invocation = receipt["commands"][-1]
+            self.assertEqual(Path(invocation["cwd"]), target)
+            self.assertEqual(invocation["argv"][-2:], ["playbook", str(self.source)])
+        self.assertTrue((target / "flow.playbook/package.json").is_file())
+        self.assertFalse((target / ".playbook-slc").exists())
+        self.assertFalse((self.project / "flow.mjs").exists())
         self.assertEqual([x[2:] for x in self.calls() if x[0] == "slc"],
                          [["codex", "gpt-6.2-sol"], ["codex", None]])
         self.assertFalse(any(x[0] in {"npm", "playbook"} for x in self.calls()))
+
+    def test_gears_only_resolves_either_host_and_returns_the_reported_file(self):
+        self.package("slc", "0.23.0")
+        claude = dict(self.env, CLAUDECODE="1", ANTHROPIC_MODEL="claude-configured")
+        claude.pop("CODEX_THREAD_ID")
+        for host, model, env in (("codex", None, self.env), ("claude-code", "claude-configured", claude)):
+            with self.subTest(host=host):
+                target = self.root / "target with spaces"
+                target.mkdir(exist_ok=True)
+                receipt = self.cli("--cwd", target, "gears", self.source, env=env)
+                result = receipt["result"]
+                self.assertEqual(result["status"], "gears-generated")
+                self.assertEqual(receipt["stages"]["selection"]["host"], host)
+                self.assertNotIn("entry", result)
+                self.assertEqual(Path(result["gears"]).read_text(), "# GEARS")
+                self.assertEqual(Path(result["gears"]), target / "flow.playbook/flow.gears.md")
+                self.assertEqual(Path(receipt["commands"][-1]["cwd"]), target)
+                compiler = [call for call in self.calls() if call[0] == "slc"][-1]
+                self.assertEqual(compiler[1][-2:], ["playbook.text2gears", str(self.source)])
+                self.assertEqual(compiler[2:], [host, model])
+        self.assertEqual(len([call for call in self.calls() if call[0] == "slc"]), 2)
+        self.assertFalse(any(call[0] in {"npm", "playbook"} for call in self.calls()))
+
+    def test_gears_only_requires_a_reported_file(self):
+        self.package("slc", "0.23.0")
+        receipt = self.cli("gears", self.source, code=1, env=dict(self.env, TEST_MODE="missing-entry"))
+        self.assertEqual(receipt["result"]["error"], "SLC did not report exactly one GEARS file")
+        self.assertNotIn("gears", receipt["result"])
 
     def test_combined_uses_claude_config_and_actual_registration(self):
         self.package("slc", "0.23.0")
         self.package("playbook", "19.1.0")
         env = dict(self.env, CLAUDECODE="1", ANTHROPIC_MODEL="glm-5.3-flash")
         env.pop("CODEX_THREAD_ID")
-        result = self.cli("workflow", self.source, self.data, env=env)
+        target = self.root / "target with spaces"
+        target.mkdir()
+        result = self.cli("--cwd", target, "workflow", self.source, self.data, env=env)
         self.assertEqual(result["stages"]["selection"], {"host":"claude-code","model":"glm-5.3-flash","model_source":"host-config"})
         registry = json.loads((self.prefix/"registry-request.json").read_text())
         self.assertEqual(registry["adapter"], "claude")
         self.assertEqual(registry["model"], "glm-5.3-flash")
         self.assertEqual(registry["entry"], result["stages"]["compile"]["entry"])
+        self.assertEqual(Path(registry["entry"]), target / "flow.mjs")
+        self.assertTrue((target / "flow.playbook/package.json").is_file())
+        invocation, = [c for c in result["commands"] if c["stage"] == "compile"]
+        self.assertEqual(Path(invocation["cwd"]), target)
         self.assertEqual([x for x in self.calls() if x[0] == "playbook"][0][1],
                          ["run", "--json", "--", f"/real-name {self.data}"])
         self.assertEqual(result["result"]["reply"], "verified")

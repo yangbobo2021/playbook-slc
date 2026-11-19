@@ -44,14 +44,17 @@ class WaitingProgress:
 
 
 class CompileProgress(WaitingProgress):
-    def __init__(self, emit, source, build, timeout, *, combined=False, clock=time.monotonic):
+    def __init__(self, emit, source, build, timeout, *, combined=False, gears_only=False, clock=time.monotonic):
         super().__init__(emit, clock)
         self.build = build
         self.timeout = timeout
         self.combined = combined
+        self.gears_only = gears_only
         self.phase = None
         self.completed = {}
-        self.emit("compile-start", f"正在把 {source.name} 编译成可运行的工作流。整条编译最多等待 {timeout} 秒。")
+        action = f"为 {source.name} 生成 GEARS 文件" if gears_only else f"把 {source.name} 编译成可运行的工作流"
+        scope = "本阶段" if gears_only else "整条编译"
+        self.emit("compile-start", f"正在{action}。{scope}最多等待 {timeout} 秒。")
 
     def feed(self, line):
         started = PHASE_START.fullmatch(line.strip())
@@ -72,16 +75,19 @@ class CompileProgress(WaitingProgress):
                 self.emit("compile-saved", "流程规则已保存。", phase=done[1], path=str(path))
 
     def tick(self, _pid, _started):
-        phase = COMPILE_PHASES.get(self.phase, "编译工作流")
+        phase = COMPILE_PHASES.get(self.phase, "生成 GEARS 文件" if self.gears_only else "编译工作流")
         saved = "流程规则已保存。" if "text2gears" in self.completed else ""
         self.wait(f"{saved}正在{phase}，仍在等待 SLC 返回。", phase=self.phase)
 
     def timed_out(self):
-        phase = COMPILE_PHASES.get(self.phase, "编译工作流")
+        phase = COMPILE_PHASES.get(self.phase, "生成 GEARS 文件" if self.gears_only else "编译工作流")
         artifacts = "、".join(f"`{path}`" for path in self.completed.values())
         saved = f"已保留这次完成的中间产物 {artifacts}。" if artifacts else ""
         downstream = "登记和运行均未开始。" if self.combined else ""
-        entry_status = "本次未确认生成可运行入口。" if any(self.build.glob("*.mjs")) else "本次未生成可运行入口。"
+        if self.gears_only:
+            entry_status = "本次未确认生成 GEARS 文件。"
+        else:
+            entry_status = "本次未确认生成可运行入口。" if any(self.build.glob("*.mjs")) else "本次未生成可运行入口。"
         self.emit("compile-timeout", f"编译已到 {self.timeout} 秒的等待上限并停止，最后停在{phase}。"
                   f"{saved}{entry_status}{downstream}", phase=self.phase,
                   build_dir=str(self.build), completed=self.completed.copy(), timeout=self.timeout,

@@ -16,7 +16,8 @@
 | 用户请求 | 预期操作 |
 | --- | --- |
 | 「安装 SLC 和 Playbook」 | 检查本机版本，按需安装。 |
-| 「编译这个 `flow.md`」 | 调用 `slc playbook`，返回编译结果和实际生成的入口路径。 |
+| 「为 `flow.md` 生成工作流 GEARS」 | 在目标目录用当前宿主调用 `slc playbook.text2gears`，按 SLC 的标准位置保存 GEARS，并返回实际生成的路径。 |
+| 「编译这个 `flow.md`」 | 在目标目录调用 `slc playbook`，保留 SLC 的标准产物布局，并返回实际生成的入口路径。 |
 | 「登记这份编译产物」 | 用 `playbook add` 登记指定入口，返回登记名称。 |
 | 「用 `/flow` 跑这份 `orders.csv`」 | 用 `playbook run` 调用所选登记，把 CSV 路径作为本次输入。 |
 | 「编译这个 `flow.md`，登记后拿 `orders.csv` 跑一次」 | 依次编译、登记和运行，前一步成功后再继续。 |

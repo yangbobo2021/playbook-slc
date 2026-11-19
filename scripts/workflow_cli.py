@@ -293,21 +293,26 @@ def adapter_call(commands, tool, operation, **values):
 
 
 def compile_source(args, commands, tool, host, model, source):
-    build_root = args.cwd / ".playbook-slc" / "builds"
-    build_root.mkdir(parents=True, exist_ok=True)
-    build = Path(tempfile.mkdtemp(prefix="build-", dir=build_root))
-    observer = CompileProgress(commands.emit, source, build, args.timeout, combined=args.action == "workflow")
+    gears_only = args.action == "gears"
+    pipeline = "playbook.text2gears" if gears_only else "playbook"
+    artifact_key, suffix, label = ("gears", ".gears.md", "GEARS 文件") if gears_only else (
+        "entry", ".mjs", "可运行入口"
+    )
+    build = args.cwd
+    observer = CompileProgress(commands.emit, source, build, args.timeout,
+                               combined=args.action == "workflow", gears_only=gears_only)
     config = adapter_call(commands, tool, "compiler-config", host=AGENTS[host][0])
-    config_path = build / "slc.config.json"
-    config_path.write_text(json.dumps(config["config"]), encoding="utf-8")
     env = dict(os.environ, SLC_AGENT=AGENTS[host][0])
     env.pop("SLC_MODEL", None)
     if model["model"]:
         env["SLC_MODEL"] = model["model"]
     before = digest(source)
     try:
-        output = commands.invoke("compile", [tool["command"], "--config", config_path, "playbook", source],
-                                 cwd=build, env=env, observer=observer)
+        with tempfile.TemporaryDirectory(prefix="playbook-slc-config-") as config_dir:
+            config_path = Path(config_dir) / "slc.config.json"
+            config_path.write_text(json.dumps(config["config"]), encoding="utf-8")
+            output = commands.invoke("compile", [tool["command"], "--config", config_path, pipeline, source],
+                                     cwd=build, env=env, observer=observer)
     except WorkflowError as error:
         if error.result.get("timed_out"):
             observer.timed_out()
@@ -317,16 +322,18 @@ def compile_source(args, commands, tool, host, model, source):
         return {**output, "build_dir": str(build), "source": str(source), "source_sha256": before}
     if digest(source) != before:
         raise WorkflowError("compile", "source changed during compilation", build_dir=str(build))
-    entries = []
+    artifacts = set()
     for line in output.splitlines():
         path = (build / line).resolve()
-        if path.suffix == ".mjs" and path.is_file() and path.is_relative_to(build):
-            entries.append(path)
-    if len(set(entries)) != 1:
-        raise WorkflowError("compile", "SLC did not report exactly one runnable entry", build_dir=str(build))
-    entry = entries[0]
-    commands.emit("compile-complete", f"已生成可运行入口 `{entry}`。", entry=str(entry))
-    return {"status": "compiled", "entry": str(entry), "entry_sha256": digest(entry),
+        if path.name.endswith(suffix) and path.is_relative_to(build) and path.is_file():
+            artifacts.add(path)
+    if len(artifacts) != 1:
+        expected = "GEARS file" if gears_only else "runnable entry"
+        raise WorkflowError("compile", f"SLC did not report exactly one {expected}", build_dir=str(build))
+    artifact = artifacts.pop()
+    commands.emit("compile-complete", f"已生成{label} `{artifact}`。", **{artifact_key: str(artifact)})
+    return {"status": "gears-generated" if gears_only else "compiled",
+            artifact_key: str(artifact), f"{artifact_key}_sha256": digest(artifact),
             "build_dir": str(build), "source": str(source), "source_sha256": before}
 
 
@@ -391,14 +398,14 @@ def execute(args, commands, stages):
         versions = "、".join(f"{name} {tool['version']}" for name, tool in tools.items())
         commands.emit("install-ready", f"所需工具已可用（{versions}）。")
         return {"status": "ready", "tools": tools}
-    source = local_file(args.cwd, args.source) if op in {"compile", "workflow"} else None
+    source = local_file(args.cwd, args.source) if op in {"gears", "compile", "workflow"} else None
     entry = local_file(args.cwd, args.entry) if op == "register" else None
     data = local_file(args.cwd, args.input) if op in {"run", "workflow"} else None
     if op == "run":
         tool = need_tools(args, commands, ["playbook"])["playbook"]
         return run_workflow(commands, tool, args.workflow, data, args.expected_entry)
     host = host_agent(args.host)
-    tools = need_tools(args, commands, {"compile": ["slc"], "register": ["playbook"],
+    tools = need_tools(args, commands, {"gears": ["slc"], "compile": ["slc"], "register": ["playbook"],
                                         "workflow": ["slc", "playbook"]}[op])
     model = model_selection(host, args, commands, tools.get("playbook") or tools["slc"])
     stages["selection"] = {"host": host, **model}
@@ -406,7 +413,7 @@ def execute(args, commands, stages):
         raise WorkflowError("register", "Playbook requires a named model; none can be resolved from the current host configuration")
     if source:
         stages["compile"] = compile_source(args, commands, tools["slc"], host, model, source)
-        if op == "compile" or stages["compile"]["status"] != "compiled":
+        if op != "workflow" or stages["compile"]["status"] != "compiled":
             return stages["compile"]
         entry = Path(stages["compile"]["entry"])
     stages["register"] = register(args, commands, tools["playbook"], host, model, entry)
@@ -426,6 +433,7 @@ def main():
     parser.add_argument("--approve-upgrade", action="append", default=[], metavar="TOOL=OLD_VERSION")
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("install").add_argument("tools", nargs="*", metavar="TOOL")
+    sub.add_parser("gears").add_argument("source")
     sub.add_parser("compile").add_argument("source")
     registration = sub.add_parser("register")
     registration.add_argument("entry")
@@ -475,7 +483,7 @@ def main():
         progress_file.close()
     evidence = {"result": result, "stages": stages, "commands": commands.records, "progress": commands.progress}
     print(commands.redact(json.dumps(evidence, ensure_ascii=False)))
-    return 0 if result["status"] in {"ready", "compiled", "registered", "reused", "run-returned"} else (
+    return 0 if result["status"] in {"ready", "gears-generated", "compiled", "registered", "reused", "run-returned"} else (
         2 if result["status"] in {"conflict", "upgrade-confirmation-required", "clarification-required"} else 1
     )
 
